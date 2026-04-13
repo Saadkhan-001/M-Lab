@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { View, StyleSheet, TouchableOpacity, TextInput, FlatList, Dimensions, RefreshControl } from 'react-native';
+import { View, StyleSheet, TouchableOpacity, TextInput, FlatList, Dimensions, RefreshControl, Modal, Alert, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Search, UserPlus, Users, UserCheck, UserMinus, Phone, Hash, Calendar, ChevronRight } from 'lucide-react-native';
-import { collection, query, onSnapshot, doc, setDoc, getDocs, limit, getDoc } from 'firebase/firestore';
+import { Search, UserPlus, Users, UserCheck, UserMinus, Phone, Hash, Calendar, ChevronRight, X } from 'lucide-react-native';
+import { collection, query, onSnapshot, doc, setDoc, getDocs, limit, getDoc, Timestamp, addDoc } from 'firebase/firestore';
 import { db } from '../../../config/firebase';
 import { useUser } from '@clerk/clerk-expo';
 import { useRouter } from 'expo-router';
@@ -29,6 +29,11 @@ export default function PatientsScreen() {
   const [patients, setPatients] = useState<Patient[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+
+  // Registration Modal State
+  const [isRegisterOpen, setIsRegisterOpen] = useState(false);
+  const [newPatient, setNewPatient] = useState({ name: '', phone: '', age: '', gender: 'Male' as 'Male' | 'Female' | 'Other' });
+  const [isRegistering, setIsRegistering] = useState(false);
 
   // Real-time listener for patients
   useEffect(() => {
@@ -96,6 +101,50 @@ export default function PatientsScreen() {
     setRefreshing(true);
     setTimeout(() => setRefreshing(false), 1500);
   }, []);
+
+  const handleRegisterPatient = async () => {
+    if (!newPatient.name || !newPatient.phone || !newPatient.age) {
+       Alert.alert("Error", "Please fill all patient details.");
+       return;
+    }
+
+    setIsRegistering(true);
+    try {
+      const userRef = doc(db, 'users', user?.id || '');
+      const userSnap = await getDoc(userRef);
+      const labId = userSnap.data()?.laboratoryId;
+      if (!labId) throw new Error("Lab ID not found");
+
+      const year = new Date().getFullYear();
+      const month = String(new Date().getMonth() + 1).padStart(2, '0');
+      const patientsRef = collection(db, 'laboratories', labId, 'patients');
+      
+      const snapshot = await getDocs(patientsRef);
+      const nextId = String(snapshot.size + 1).padStart(2, '0');
+      const mrNumber = `${year}000${month}${nextId}`;
+
+      const patientDoc = {
+        name: newPatient.name,
+        phone: newPatient.phone,
+        age: parseInt(newPatient.age),
+        gender: newPatient.gender,
+        mrNumber,
+        createdAt: Timestamp.now()
+      };
+
+      await addDoc(patientsRef, patientDoc);
+      
+      // Reset and close
+      setNewPatient({ name: '', phone: '', age: '', gender: 'Male' });
+      setIsRegisterOpen(false);
+      Alert.alert("Success", "Patient successfully registered.");
+    } catch (e: any) {
+      console.error(e);
+      Alert.alert("Registration Failed", e.message || "An error occurred.");
+    } finally {
+      setIsRegistering(false);
+    }
+  };
 
   const renderStatCard = (title: string, value: number, icon: any, color: string) => (
     <View style={styles.statCard}>
@@ -195,10 +244,49 @@ export default function PatientsScreen() {
 
       <TouchableOpacity 
         style={styles.fab}
-        onPress={() => {/* Open Add Patient Flow */}}
+        onPress={() => setIsRegisterOpen(true)}
       >
         <UserPlus size={28} color={Colors.grayscale.white} />
       </TouchableOpacity>
+
+      <Modal visible={isRegisterOpen} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+             <View style={styles.modalHeader}>
+                <AppText variant="title2">Register Patient</AppText>
+                <TouchableOpacity onPress={() => setIsRegisterOpen(false)}><X size={24} color="black" /></TouchableOpacity>
+             </View>
+
+             <ScrollView style={{ padding: 24 }}>
+                <View style={styles.formGroup}>
+                  <AppText variant="caption1" style={styles.label}>Patient Full Name</AppText>
+                  <TextInput style={styles.input} placeholder="John Doe" value={newPatient.name} onChangeText={v => setNewPatient({...newPatient, name: v})} />
+                </View>
+                <View style={styles.formGroup}>
+                  <AppText variant="caption1" style={styles.label}>Phone Number</AppText>
+                  <TextInput style={styles.input} placeholder="03XXXXXXXXX" keyboardType="phone-pad" value={newPatient.phone} onChangeText={v => setNewPatient({...newPatient, phone: v})} />
+                </View>
+                <View style={{ flexDirection: 'row', gap: 16 }}>
+                  <View style={[styles.formGroup, { flex: 1 }]}>
+                    <AppText variant="caption1" style={styles.label}>Age</AppText>
+                    <TextInput style={styles.input} placeholder="25" keyboardType="numeric" value={newPatient.age} onChangeText={v => setNewPatient({...newPatient, age: v})} />
+                  </View>
+                  <View style={[styles.formGroup, { flex: 1 }]}>
+                    <AppText variant="caption1" style={styles.label}>Gender</AppText>
+                    <View style={styles.genderRow}>
+                       {(['Male', 'Female'] as const).map(g => (
+                         <TouchableOpacity key={g} style={[styles.genderBtn, newPatient.gender === g && styles.genderBtnActive]} onPress={() => setNewPatient({...newPatient, gender: g})}>
+                            <AppText variant="caption1" color={newPatient.gender === g ? 'white' : 'black'}>{g}</AppText>
+                         </TouchableOpacity>
+                       ))}
+                    </View>
+                  </View>
+                </View>
+                <AppButton title={isRegistering ? "Registering..." : "Confirm Registration"} disabled={isRegistering} onPress={handleRegisterPatient} buttonStyle={{ marginTop: 24, marginBottom: 40 }} />
+             </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -225,4 +313,13 @@ const styles = StyleSheet.create({
   emptyContainer: { alignItems: 'center', marginTop: 100 },
   emptyTitle: { color: Colors.grayscale.black, marginTop: 16, marginBottom: 4 },
   fab: { position: 'absolute', bottom: 30, right: 30, width: 64, height: 64, borderRadius: 32, backgroundColor: Colors.primary.navy, justifyContent: 'center', alignItems: 'center', elevation: 5, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8 },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  modalContent: { backgroundColor: 'white', borderTopLeftRadius: 32, borderTopRightRadius: 32, height: '80%' },
+  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 24, paddingVertical: 20, borderBottomWidth: 1, borderBottomColor: Colors.grayscale.lightGray },
+  formGroup: { marginBottom: 20 },
+  label: { color: Colors.grayscale.darkGray, marginBottom: 8, marginLeft: 4 },
+  input: { backgroundColor: Colors.grayscale.lightGray, borderRadius: 16, padding: 16, fontFamily: 'Onest-Medium', fontSize: 16, color: Colors.grayscale.black },
+  genderRow: { flexDirection: 'row', gap: 12 },
+  genderBtn: { flex: 1, height: 54, borderRadius: 16, backgroundColor: Colors.grayscale.lightGray, justifyContent: 'center', alignItems: 'center' },
+  genderBtnActive: { backgroundColor: Colors.primary.navy },
 });
