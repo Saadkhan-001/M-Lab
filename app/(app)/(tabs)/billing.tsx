@@ -4,12 +4,18 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Search, UserPlus, CreditCard, Plus, X, Check, Calculator, ReceiptText, User, Tag, Banknote, Landmark } from 'lucide-react-native';
 import { collection, query, where, onSnapshot, doc, setDoc, addDoc, Timestamp, getDocs, getDoc } from 'firebase/firestore';
 import * as Localization from 'expo-localization';
-import { db } from '../../../config/firebase';
+import { db, storage } from '../../../config/firebase';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { useUser } from '@clerk/clerk-expo';
 import { Colors } from '../../../constants/Colors';
 import AppText from '../../../components/AppText';
 import AppButton from '../../../components/AppButton';
 import { useLocalSearchParams } from 'expo-router';
+import { ReportEngine } from '../../../utils/reportEngine';
+import * as Sharing from 'expo-sharing';
+import * as Clipboard from 'expo-clipboard';
+import * as Print from 'expo-print';
+import * as Linking from 'expo-linking';
 
 // Interfaces
 interface TestCatalogItem {
@@ -49,6 +55,8 @@ export default function BillingScreen() {
   const [discount, setDiscount] = useState('0');
   const [paidAmount, setPaidAmount] = useState('0');
   const [isFinalizing, setIsFinalizing] = useState(false);
+  const [labProfile, setLabProfile] = useState<any>(null);
+  const [completedInvoice, setCompletedInvoice] = useState<any>(null);
 
   // Localization
   const currencySymbol = useMemo(() => {
@@ -67,6 +75,11 @@ export default function BillingScreen() {
         const userSnap = await getDoc(userRef);
         const labId = userSnap.data()?.laboratoryId;
         if (!labId) return;
+
+        const labRef = doc(db, 'laboratories', labId);
+        onSnapshot(labRef, snap => {
+           if (snap.exists()) setLabProfile(snap.data());
+        });
 
         const catalogRef = collection(db, 'laboratories', labId, 'test_catalog');
         const unsubscribe = onSnapshot(catalogRef, (snapshot) => {
@@ -252,7 +265,19 @@ export default function BillingScreen() {
         });
       }
 
-      Alert.alert("Success", "Bill confirmed and tests sent to laboratory!");
+      // Prepare UI for Completion Modal
+      const invoiceData = {
+         invoiceNo: user?.id?.substring(0, 4).toUpperCase() + '-' + Date.now().toString().slice(-6),
+         tests: selectedTests.map(t => ({ name: t.name, price: t.price })),
+         totalAmount: totalPrice,
+         discount: discountVal,
+         paid: paidVal,
+         balance,
+         createdAt: { toDate: () => new Date() }
+      };
+
+      setCompletedInvoice({ ...invoiceData, patient: selectedPatient });
+
       setSelectedPatient(null);
       setSelectedTests([]);
       setDiscount('0');
@@ -264,6 +289,57 @@ export default function BillingScreen() {
     } finally {
       setIsFinalizing(false);
     }
+  };
+
+  const handleViewReceipt = async () => {
+    try {
+      const uri = await ReportEngine.generateReceiptPDF(labProfile || {}, completedInvoice.patient, completedInvoice, currencySymbol);
+      await Print.printAsync({ uri });
+    } catch(e) { Alert.alert("Error", "Could not load report"); }
+  };
+
+  const handleShareReceipt = async () => {
+    try {
+      setIsFinalizing(true);
+      const uri = await ReportEngine.generateReceiptPDF(labProfile || {}, completedInvoice.patient, completedInvoice, currencySymbol);
+      
+      // Upload PDF to Firebase to create a Secure Cloud Link
+      const blob: any = await new Promise((resolve, reject) => {
+           const xhr = new XMLHttpRequest();
+           xhr.onload = function() { resolve(xhr.response); };
+           xhr.onerror = function(e) { reject(new TypeError("Network request failed")); };
+           xhr.responseType = "blob";
+           xhr.open("GET", uri, true);
+           xhr.send(null);
+      });
+
+      const pdfRef = ref(storage, `receipts/${completedInvoice.invoiceNo}_${Date.now()}.pdf`);
+      await uploadBytes(pdfRef, blob);
+      const downloadUrl = await getDownloadURL(pdfRef);
+
+      // WhatsApp Share with Text Caption fallback
+      let text = `Hello ${completedInvoice.patient.name},\nThank you for your visit to ${labProfile?.name || 'our laboratory'}. Attached is your payment receipt showing a processed amount of ${currencySymbol}${completedInvoice.paid}.\n\n📄 View Your Receipt:\n${downloadUrl}\n\nRegards.`;
+      
+      let phone = completedInvoice.patient?.phone || '';
+      phone = phone.replace(/[^0-9]/g, '');
+      if (phone.startsWith('03')) {
+          phone = '92' + phone.substring(1); 
+      } else if (!phone.startsWith('92') && phone.length === 10) {
+          phone = '92' + phone; 
+      }
+
+      const whatsappUrl = `whatsapp://send?phone=${phone}&text=${encodeURIComponent(text)}`;
+      const canOpen = await Linking.canOpenURL(whatsappUrl);
+      
+      if (canOpen) {
+          await Linking.openURL(whatsappUrl);
+      } else {
+          await Clipboard.setStringAsync(text);
+          Alert.alert("Caption Copied", "The smart message text was copied to your clipboard. You can tap 'Paste' in WhatsApp to send it with the document!");
+          await Sharing.shareAsync(uri, { UTI: '.pdf', mimeType: 'application/pdf', dialogTitle: 'Share Receipt' });
+      }
+    } catch(e) { Alert.alert("Error", "Could not share report."); }
+    finally { setIsFinalizing(false); }
   };
 
   return (
@@ -437,6 +513,29 @@ export default function BillingScreen() {
                 <AppButton title={loading ? "Registering..." : "Confirm Registration"} disabled={loading} onPress={handleRegisterPatient} buttonStyle={{ marginTop: 24 }} />
              </ScrollView>
           </View>
+        </View>
+      </Modal>
+
+      {/* Completion Modal */}
+      <Modal visible={!!completedInvoice} animationType="fade" transparent>
+        <View style={[styles.modalOverlay, { justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.8)' }]}>
+           <View style={[styles.modalContent, { height: 'auto', padding: 32, marginHorizontal: 20, borderRadius: 24, alignItems: 'center' }]}>
+              <View style={{ width: 80, height: 80, borderRadius: 40, backgroundColor: '#E8F5E9', justifyContent: 'center', alignItems: 'center', marginBottom: 20 }}>
+                 <Check size={40} color="#2E7D32" />
+              </View>
+              <AppText variant="title2" color="#2E7D32" style={{ marginBottom: 8 }}>Payment Received!</AppText>
+              <AppText variant="body" color={Colors.grayscale.darkGray} style={{ textAlign: 'center', marginBottom: 24 }}>
+                The tests have been dispatched to the laboratory workflow. Total Paid: {currencySymbol}{completedInvoice?.paid}.
+              </AppText>
+
+              <View style={{ width: '100%', gap: 12 }}>
+                <AppButton title="View PDF Receipt" onPress={handleViewReceipt} buttonStyle={{ backgroundColor: Colors.primary.navy }} />
+                <AppButton title="Send via WhatsApp" onPress={handleShareReceipt} buttonStyle={{ backgroundColor: '#25D366' }} />
+                <TouchableOpacity onPress={() => setCompletedInvoice(null)} style={{ padding: 16, alignItems: 'center', marginTop: 10 }}>
+                   <AppText variant="body" color={Colors.grayscale.silver} fontFamily="Onest-Bold">Close & Continue</AppText>
+                </TouchableOpacity>
+              </View>
+           </View>
         </View>
       </Modal>
     </SafeAreaView>

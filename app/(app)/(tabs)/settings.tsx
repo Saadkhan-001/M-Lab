@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { View, StyleSheet, ScrollView, TouchableOpacity, Modal, TextInput, Alert, ActivityIndicator, Image, Switch } from 'react-native';
+import { View, StyleSheet, ScrollView, TouchableOpacity, Modal, TextInput, Alert, ActivityIndicator, Image, Switch, KeyboardAvoidingView, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Settings, LogOut, Shield, Bell, ChevronRight, FlaskConical, Plus, X, Sparkles, Trash2, CreditCard, User as UserIcon, Crown } from 'lucide-react-native';
 import { useAuth, useUser } from '@clerk/clerk-expo';
 import { collection, query, onSnapshot, doc, setDoc, addDoc, deleteDoc, updateDoc, getDoc } from 'firebase/firestore';
 import { useRouter } from 'expo-router';
-import { db } from '../../../config/firebase';
+import { db, storage } from '../../../config/firebase';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import * as ImagePicker from 'expo-image-picker';
 import { Colors } from '../../../constants/Colors';
 import AppText from '../../../components/AppText';
 import AppButton from '../../../components/AppButton';
@@ -33,6 +35,11 @@ export default function SettingsScreen() {
   const [editingTest, setEditingTest] = useState<Partial<TestCatalogItem> | null>(null);
   const [isAILoading, setIsAILoading] = useState(false);
   
+  // Lab Profile Editing
+  const [labProfile, setLabProfile] = useState<any>(null);
+  const [isLabProfileOpen, setIsLabProfileOpen] = useState(false);
+  const [labForm, setLabForm] = useState({ name: '', phone: '', email: '', logoUrl: '', base64Logo: '', whatsappTemplate: 'Hello {PatientName}, here is your {TestName} report from {LabName}.' });
+  
   // Biometric States
   const [isBiometricEnabled, setIsBiometricEnabled] = useState(false);
   const [isBiometricModalOpen, setIsBiometricModalOpen] = useState(false);
@@ -57,6 +64,14 @@ export default function SettingsScreen() {
         const catalogRef = collection(db, 'laboratories', labId, 'test_catalog');
         const unsubscribe = onSnapshot(catalogRef, (snapshot) => {
           setCatalog(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as TestCatalogItem[]);
+        });
+
+        // Listen to Lab Profile
+        const labRef = doc(db, 'laboratories', labId);
+        onSnapshot(labRef, (snap) => {
+          if (snap.exists()) {
+             setLabProfile({ id: snap.id, ...snap.data() });
+          }
         });
 
         return unsubscribe;
@@ -191,6 +206,72 @@ export default function SettingsScreen() {
     }
   };
 
+  const openLabProfile = () => {
+    setLabForm({
+      name: labProfile?.name || '',
+      phone: labProfile?.phone || '',
+      email: labProfile?.email || '',
+      logoUrl: labProfile?.logoUrl || '',
+      base64Logo: '',
+      whatsappTemplate: labProfile?.whatsappTemplate || 'Hello {PatientName}, here is your {TestName} report from {LabName}.'
+    });
+    setIsLabProfileOpen(true);
+  };
+
+  const pickLogo = async () => {
+    let result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.5,
+      base64: true,
+    });
+    if (!result.canceled) {
+      setLabForm(f => ({ ...f, logoUrl: result.assets[0].uri, base64Logo: result.assets[0].base64 || '' }));
+    }
+  };
+
+  const saveLabProfile = async () => {
+    setIsAuthLoading(true);
+    try {
+       let finalLogoUrl = labForm.logoUrl;
+       
+       if (finalLogoUrl && !finalLogoUrl.startsWith('http')) {
+         const blob: any = await new Promise((resolve, reject) => {
+           const xhr = new XMLHttpRequest();
+           xhr.onload = function() {
+             resolve(xhr.response);
+           };
+           xhr.onerror = function(e) {
+             reject(new TypeError("Network request failed"));
+           };
+           xhr.responseType = "blob";
+           xhr.open("GET", finalLogoUrl, true);
+           xhr.send(null);
+         });
+
+         const logoRef = ref(storage, `logos/${labProfile.id}.jpg`);
+         await uploadBytes(logoRef, blob);
+         finalLogoUrl = await getDownloadURL(logoRef);
+       }
+       
+       await updateDoc(doc(db, 'laboratories', labProfile.id), {
+          name: labForm.name,
+          phone: labForm.phone,
+          email: labForm.email,
+          logoUrl: finalLogoUrl,
+          whatsappTemplate: labForm.whatsappTemplate
+       });
+       setIsLabProfileOpen(false);
+       Alert.alert("Success", "Lab Profile Updated");
+    } catch(e: any) { 
+       console.error(e); 
+       Alert.alert("Error", e.message || "Could not save profile.");
+    } finally { 
+       setIsAuthLoading(false); 
+    }
+  };
+
   const SettingItem = ({ icon: Icon, label, onPress, color = Colors.primary.navy, rightText }: any) => (
     <TouchableOpacity style={styles.settingItem} onPress={onPress}>
       <View style={styles.settingLeft}>
@@ -214,9 +295,11 @@ export default function SettingsScreen() {
         </View>
 
         {/* User Profile Card */}
-        <View style={styles.profileCard}>
+        <TouchableOpacity style={styles.profileCard} onPress={openLabProfile}>
           <View style={styles.profileInfo}>
-            {user?.imageUrl ? (
+            {labProfile?.logoUrl ? (
+              <Image source={{ uri: labProfile.logoUrl }} style={styles.avatar} />
+            ) : user?.imageUrl ? (
               <Image source={{ uri: user.imageUrl }} style={styles.avatar} />
             ) : (
               <View style={[styles.avatar, { backgroundColor: Colors.grayscale.lightGray, justifyContent: 'center', alignItems: 'center' }]}>
@@ -224,8 +307,8 @@ export default function SettingsScreen() {
               </View>
             )}
             <View style={styles.profileMeta}>
-              <AppText variant="title2" numberOfLines={1}>{user?.fullName || 'Lab Admin'}</AppText>
-              <AppText variant="caption1" color={Colors.grayscale.darkGray}>{user?.primaryEmailAddress?.emailAddress}</AppText>
+              <AppText variant="title2" numberOfLines={1}>{labProfile?.name || user?.fullName || 'My Laboratory'}</AppText>
+              <AppText variant="caption1" color={Colors.grayscale.darkGray}>{labProfile?.email || user?.primaryEmailAddress?.emailAddress}</AppText>
             </View>
           </View>
           
@@ -237,7 +320,7 @@ export default function SettingsScreen() {
               </AppText>
             </View>
           </View>
-        </View>
+        </TouchableOpacity>
 
         <View style={styles.section}>
           <AppText variant="caption1" fontFamily="Onest-Bold" style={styles.sectionTitle}>Lab Management</AppText>
@@ -372,6 +455,62 @@ export default function SettingsScreen() {
               </ScrollView>
            </View>
         </View>
+      </Modal>
+
+      {/* Lab Profile Modal */}
+      <Modal visible={isLabProfileOpen} animationType="slide" transparent>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalOverlay}>
+           <View style={styles.modalContent}>
+              <View style={styles.modalHeader}>
+                 <AppText variant="title2">Laboratory Profile</AppText>
+                 <TouchableOpacity onPress={() => setIsLabProfileOpen(false)}><X size={24} color="black" /></TouchableOpacity>
+              </View>
+
+              <ScrollView style={{ padding: 24 }}>
+                 <View style={{ alignItems: 'center', marginBottom: 24 }}>
+                   <TouchableOpacity onPress={pickLogo} style={{ width: 100, height: 100, borderRadius: 32, backgroundColor: Colors.grayscale.offWhite, justifyContent: 'center', alignItems: 'center', overflow: 'hidden', borderWidth: 2, borderColor: Colors.grayscale.lightGray }}>
+                     {labForm.logoUrl ? (
+                        <Image source={{ uri: labForm.logoUrl }} style={{ width: '100%', height: '100%' }} />
+                     ) : (
+                        <Plus size={32} color={Colors.grayscale.silver} />
+                     )}
+                   </TouchableOpacity>
+                   <AppText variant="caption1" color={Colors.primary.skyBlue} style={{ marginTop: 8 }}>Change Lab Logo</AppText>
+                 </View>
+
+                 <View style={styles.formGroup}>
+                    <AppText variant="caption1" style={styles.label}>Laboratory Name</AppText>
+                    <TextInput style={styles.input} placeholder="My Clinical Lab" value={labForm.name} onChangeText={v => setLabForm({...labForm, name: v})} />
+                 </View>
+                 
+                 <View style={{ flexDirection: 'row', gap: 16 }}>
+                    <View style={[styles.formGroup, { flex: 1 }]}>
+                      <AppText variant="caption1" style={styles.label}>Contact Phone</AppText>
+                      <TextInput style={styles.input} placeholder="03XXXXXXXXX" keyboardType="phone-pad" value={labForm.phone} onChangeText={v => setLabForm({...labForm, phone: v})} />
+                    </View>
+                    <View style={[styles.formGroup, { flex: 1 }]}>
+                      <AppText variant="caption1" style={styles.label}>Business Email</AppText>
+                      <TextInput style={styles.input} placeholder="lab@example.com" keyboardType="email-address" autoCapitalize="none" value={labForm.email} onChangeText={v => setLabForm({...labForm, email: v})} />
+                    </View>
+                 </View>
+
+                 <View style={styles.formGroup}>
+                    <AppText variant="caption1" style={styles.label}>WhatsApp Message Template</AppText>
+                    <TextInput 
+                       style={[styles.input, { height: 100, textAlignVertical: 'top', paddingTop: 16 }]} 
+                       placeholder="Hello {PatientName}..." 
+                       multiline
+                       value={labForm.whatsappTemplate} 
+                       onChangeText={v => setLabForm({...labForm, whatsappTemplate: v})} 
+                    />
+                    <AppText variant="caption1" color={Colors.grayscale.silver} style={{ marginTop: 4, fontSize: 10 }}>Use {`{PatientName}`}, {`{TestName}`}, {`{LabName}`}</AppText>
+                 </View>
+
+                 <AppButton title={isAuthLoading ? "Saving..." : "Save Profile"} disabled={isAuthLoading} onPress={saveLabProfile} buttonStyle={{ marginTop: 12 }} />
+                 <View style={{ height: 100 }} />
+              </ScrollView>
+           </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* Biometric Authorization Modal */}

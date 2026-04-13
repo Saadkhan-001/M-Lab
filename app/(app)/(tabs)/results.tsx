@@ -1,16 +1,22 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { View, StyleSheet, TouchableOpacity, TextInput, FlatList, Modal, ActivityIndicator, ScrollView, RefreshControl, KeyboardAvoidingView, Platform, Dimensions, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Search, ClipboardList, Clock, CheckCircle2, ChevronRight, X, Sparkles, AlertCircle, Save, SlidersHorizontal } from 'lucide-react-native';
+import { Search, ClipboardList, Clock, CheckCircle2, ChevronRight, X, Sparkles, AlertCircle, Save, SlidersHorizontal, Share2, FileText } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
 import { collection, query, onSnapshot, doc, updateDoc, Timestamp, getDoc, where, getDocs } from 'firebase/firestore';
-import { db } from '../../../config/firebase';
+import { db, storage } from '../../../config/firebase';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { useUser } from '@clerk/clerk-expo';
 import { Colors } from '../../../constants/Colors';
 import AppText from '../../../components/AppText';
 import AppButton from '../../../components/AppButton';
 import { AIService, LabParameter } from '../../../services/AIService';
 import { useSubscription } from '../../../hooks/useSubscription';
+import { ReportEngine } from '../../../utils/reportEngine';
+import * as Sharing from 'expo-sharing';
+import * as Clipboard from 'expo-clipboard';
+import * as Print from 'expo-print';
+import * as Linking from 'expo-linking';
 
 interface TestRecord {
   id: string;
@@ -41,6 +47,10 @@ export default function ResultsScreen() {
   const [isAILoading, setIsAILoading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // WhatsApp & Report States
+  const [labProfile, setLabProfile] = useState<any>(null);
+  const [patientData, setPatientData] = useState<any>(null);
+
   // Real-time listener
   useEffect(() => {
     if (!user?.id) return;
@@ -56,6 +66,11 @@ export default function ResultsScreen() {
             setLoading(false);
             return;
           }
+
+          const labRef = doc(db, 'laboratories', labId);
+          onSnapshot(labRef, snap => {
+             if (snap.exists()) setLabProfile(snap.data());
+          });
 
           const testsRef = collection(db, 'laboratories', labId, 'tests');
           const unsubscribe = onSnapshot(testsRef, (snapshot) => {
@@ -108,6 +123,10 @@ export default function ResultsScreen() {
       const labId = userSnap.data()?.laboratoryId;
       if (!labId) throw new Error("Lab ID not found");
       
+      const patRef = doc(db, 'laboratories', labId, 'patients', testRequest.patientId);
+      const patSnap = await getDoc(patRef);
+      if (patSnap.exists()) setPatientData(patSnap.data());
+
       // 1. Try fetching from Cloud Repository (Direct link via Test ID)
       if (testRequest.testId) {
         const catalogRef = doc(db, 'laboratories', labId, 'test_catalog', testRequest.testId);
@@ -183,6 +202,75 @@ export default function ResultsScreen() {
     } catch (e) {
       console.error(e);
       Alert.alert("Error", "Could not save results.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleViewReport = async () => {
+    try {
+      setIsSubmitting(true);
+      const uri = await ReportEngine.generatePDF(labProfile || {}, patientData || { name: selectedTest?.patientName }, selectedTest || {} as any, currentParameters);
+      await Print.printAsync({ uri });
+    } catch(e) {
+      console.error(e);
+      Alert.alert("Error", "Could not generate report.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleWhatsAppSend = async () => {
+    try {
+      setIsSubmitting(true);
+      let text = labProfile?.whatsappTemplate || "Hello {PatientName}, your {TestName} report is ready.";
+      text = text.replace(/{PatientName}/g, patientData?.name || selectedTest?.patientName || '');
+      text = text.replace(/{TestName}/g, selectedTest?.testName || '');
+      text = text.replace(/{LabName}/g, labProfile?.name || 'our laboratory');
+      
+      const uri = await ReportEngine.generatePDF(labProfile || {}, patientData || { name: selectedTest?.patientName }, selectedTest || {} as any, currentParameters);
+
+      // Upload PDF to Firebase to create a Secure Cloud Link
+      const blob: any = await new Promise((resolve, reject) => {
+           const xhr = new XMLHttpRequest();
+           xhr.onload = function() { resolve(xhr.response); };
+           xhr.onerror = function(e) { reject(new TypeError("Network request failed")); };
+           xhr.responseType = "blob";
+           xhr.open("GET", uri, true);
+           xhr.send(null);
+      });
+
+      const pdfRef = ref(storage, `reports/${selectedTest?.id}_${Date.now()}.pdf`);
+      await uploadBytes(pdfRef, blob);
+      const downloadUrl = await getDownloadURL(pdfRef);
+
+      // Append secure link to the template
+      text = text + "\n\n📄 View Your Report:\n" + downloadUrl;
+
+      // Smart Phone Number Parsing (Converting typical local numbers to standard international format)
+      let phone = patientData?.phone || '';
+      phone = phone.replace(/[^0-9]/g, '');
+      if (phone.startsWith('03')) {
+          phone = '92' + phone.substring(1); 
+      } else if (!phone.startsWith('92') && phone.length === 10) {
+          phone = '92' + phone; 
+      }
+
+      const whatsappUrl = `whatsapp://send?phone=${phone}&text=${encodeURIComponent(text)}`;
+      const canOpen = await Linking.canOpenURL(whatsappUrl);
+      
+      if (canOpen) {
+          await Linking.openURL(whatsappUrl);
+      } else {
+          // Fallback if WhatsApp is deeply inaccessible
+          await Clipboard.setStringAsync(text);
+          Alert.alert("Message Copied", "WhatsApp couldn't open automatically. Text & Link copied to clipboard!");
+          await Sharing.shareAsync(uri, { UTI: '.pdf', mimeType: 'application/pdf', dialogTitle: 'Share Report' });
+      }
+
+    } catch(e) {
+      console.error(e);
+      Alert.alert("Error", "Could not share report.");
     } finally {
       setIsSubmitting(false);
     }
@@ -295,13 +383,14 @@ export default function ResultsScreen() {
                       <AppText variant="caption1" fontFamily="Onest-Bold">{param.name}</AppText>
                       <View style={styles.rangeBadge}><AppText variant="caption1" style={styles.rangeText}>{param.range} {param.unit}</AppText></View>
                    </View>
-                   <View style={styles.inputWrapper}>
+                   <View style={[styles.inputWrapper, selectedTest?.reportStatus === 'completed' && { opacity: 0.6 }]}>
                       <TextInput 
                         style={styles.numericInput}
                         placeholder="0.00"
                         keyboardType="numeric"
                         value={formValues[param.name] || ''}
                         onChangeText={v => setFormValues({...formValues, [param.name]: v})}
+                        editable={selectedTest?.reportStatus !== 'completed'}
                       />
                       <AppText variant="caption1" color={Colors.primary.navy}>{param.unit}</AppText>
                    </View>
@@ -311,11 +400,18 @@ export default function ResultsScreen() {
             </ScrollView>
 
             <View style={styles.footer}>
-               <AppButton 
-                  title={isSubmitting ? "Saving..." : selectedTest?.reportStatus === 'pending' ? "Confirm Results" : "Verify & Finalize"}
-                  onPress={handleSubmitResults}
-                  disabled={isSubmitting || isAILoading}
-               />
+               {selectedTest?.reportStatus === 'completed' ? (
+                 <View style={{ flexDirection: 'row', gap: 12 }}>
+                   <AppButton title="View PDF" onPress={handleViewReport} disabled={isSubmitting} buttonStyle={{ flex: 1, backgroundColor: Colors.primary.navy }} />
+                   <AppButton title="Send WhatsApp" onPress={handleWhatsAppSend} disabled={isSubmitting} buttonStyle={{ flex: 1.2, backgroundColor: '#25D366' }} />
+                 </View>
+               ) : (
+                 <AppButton 
+                    title={isSubmitting ? "Saving..." : selectedTest?.reportStatus === 'pending' ? "Confirm Results" : "Verify & Finalize"}
+                    onPress={handleSubmitResults}
+                    disabled={isSubmitting || isAILoading}
+                 />
+               )}
             </View>
           </KeyboardAvoidingView>
         </View>
