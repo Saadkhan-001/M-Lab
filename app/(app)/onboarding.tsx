@@ -5,7 +5,7 @@ import { BlurView } from 'expo-blur';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { ArrowLeft, UploadCloud, Microscope } from 'lucide-react-native';
 import * as ImagePicker from 'expo-image-picker';
-import { useUser } from '@clerk/clerk-expo';
+import { useUser, useAuth } from '@clerk/clerk-expo';
 import { doc, setDoc, collection } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { useRouter } from 'expo-router';
@@ -19,6 +19,7 @@ const { width } = Dimensions.get('window');
 export default function OnboardingWizard() {
   const router = useRouter();
   const { user } = useUser();
+  const { signOut } = useAuth();
   const [step, setStep] = useState(1);
 
   // Form State
@@ -106,11 +107,18 @@ export default function OnboardingWizard() {
       <SafeAreaView style={styles.safeArea}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.content}>
           <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-            {step > 1 && (
-              <TouchableOpacity onPress={handleBack} style={styles.backButton}>
-                <ArrowLeft size={24} color={Colors.grayscale.black} />
+            <View style={styles.topNav}>
+              {step > 1 ? (
+                <TouchableOpacity onPress={handleBack} style={styles.backButton}>
+                  <ArrowLeft size={24} color={Colors.grayscale.black} />
+                </TouchableOpacity>
+              ) : (
+                <View />
+              )}
+              <TouchableOpacity onPress={() => signOut()} style={styles.logoutButton}>
+                <AppText variant="caption1" fontFamily="Onest-Bold" color={Colors.message.error}>Sign Out</AppText>
               </TouchableOpacity>
-            )}
+            </View>
 
             <View style={styles.headerContainer}>
               <View style={styles.logoContainer}>
@@ -224,5 +232,7 @@ const styles = StyleSheet.create({
   input: { backgroundColor: Colors.grayscale.white, borderRadius: 12, borderWidth: 1, borderColor: Colors.grayscale.silver, height: 56, paddingHorizontal: 16, fontSize: 16, color: Colors.grayscale.black, fontFamily: 'Onest-Medium' },
   imagePicker: { height: 120, backgroundColor: Colors.grayscale.white, borderRadius: 12, borderWidth: 1, borderColor: Colors.grayscale.silver, borderStyle: 'dashed', justifyContent: 'center', alignItems: 'center'},
   imagePreview: { width: '100%', height: '100%', borderRadius: 12, resizeMode: 'cover' },
+  topNav: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
+  logoutButton: { padding: 8 },
 });
 

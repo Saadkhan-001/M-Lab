@@ -4,6 +4,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Mail, Lock, Eye, EyeOff, User, ArrowLeft, FlaskConical } from 'lucide-react-native';
+import * as Linking from 'expo-linking';
 import { useSignUp, useOAuth } from '@clerk/clerk-expo';
 import { useRouter } from 'expo-router';
 import { Alert } from 'react-native';
@@ -73,7 +74,9 @@ export default function SignUpScreen() {
 
   const triggerGoogleOAuth = React.useCallback(async () => {
     try {
-      const { createdSessionId, setActive: setOAuthActive } = await startOAuthFlow();
+      const { createdSessionId, setActive: setOAuthActive } = await startOAuthFlow({
+        redirectUrl: Linking.createURL('/oauth-native-callback', { scheme: 'labmanagementapp' }),
+      });
       if (createdSessionId && setOAuthActive) {
         await setOAuthActive({ session: createdSessionId });
       }

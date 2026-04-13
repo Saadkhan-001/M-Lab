@@ -8,15 +8,56 @@ import { Colors } from '../../constants/Colors';
 import AppText from '../../components/AppText';
 import AppButton from '../../components/AppButton';
 import { useSubscription } from '../../hooks/useSubscription';
+import { useUser } from '@clerk/clerk-expo';
+import { doc, getDoc, updateDoc } from 'firebase/firestore';
+import { db } from '../../config/firebase';
+import { REVENUECAT_CONFIG } from '../../config/RevenueCatConfig';
 
 const { width } = Dimensions.get('window');
 
 export default function PlansScreen() {
   const router = useRouter();
   const { isPro } = useSubscription();
+  const { user } = useUser();
   const [offerings, setOfferings] = useState<PurchasesPackage[]>([]);
   const [loading, setLoading] = useState(true);
   const [purchasingId, setPurchasingId] = useState<string | null>(null);
+
+  const syncSubscriptionToDatabase = async (customerInfo: any) => {
+    if (!user?.id) return;
+    try {
+      const activeEntitlement = customerInfo.entitlements.active[REVENUECAT_CONFIG.ENTITLEMENT_ID];
+      const isCurrentlyPro = !!activeEntitlement;
+      
+      let planDisplayName = 'FREE PLAN';
+      if (activeEntitlement) {
+         const productId = activeEntitlement.productIdentifier;
+         if (productId.includes('monthly')) planDisplayName = 'Monthly Pro';
+         else if (productId.includes('yearly')) planDisplayName = 'Yearly Pro';
+         else if (productId.includes('lifetime')) planDisplayName = 'Lifetime Pro';
+         else planDisplayName = 'Pro Member';
+      }
+
+      const userRef = doc(db, 'users', user.id);
+      await updateDoc(userRef, {
+        isPro: isCurrentlyPro,
+        planName: planDisplayName,
+        subscriptionUpdatedAt: new Date().toISOString()
+      });
+
+      // Also update laboratory document if possible to reflect global pro status
+      const userSnap = await getDoc(userRef);
+      const labId = userSnap.data()?.laboratoryId;
+      if (labId) {
+        await updateDoc(doc(db, 'laboratories', labId), {
+           isPro: isCurrentlyPro,
+           planName: planDisplayName,
+        });
+      }
+    } catch(e) {
+      console.error("Firebase sync error:", e);
+    }
+  };
 
   useEffect(() => {
     const fetchOfferings = async () => {
@@ -39,11 +80,11 @@ export default function PlansScreen() {
     setPurchasingId(pkg.identifier);
     try {
       const { customerInfo } = await Purchases.purchasePackage(pkg);
-      if (customerInfo.entitlements.active['pro']) {
+      if (customerInfo.entitlements.active[REVENUECAT_CONFIG.ENTITLEMENT_ID]) {
+        await syncSubscriptionToDatabase(customerInfo);
         Alert.alert("Success!", "You are now a PRO member. Your lab's AI is fully unlocked!");
         router.replace('/(app)/(tabs)');
       } else {
-        // Handle case where purchase went through but entitlement isn't active
         Alert.alert("Note", "Purchase completed. Refreshing status...");
         router.replace('/(app)/(tabs)');
       }
@@ -125,7 +166,11 @@ export default function PlansScreen() {
         )}
 
         <TouchableOpacity style={styles.restoreBtn} onPress={async () => {
-             try { await Purchases.restorePurchases(); Alert.alert("Restored", "Your purchases have been synchronized."); } catch(e) {}
+             try { 
+               const customerInfo = await Purchases.restorePurchases(); 
+               await syncSubscriptionToDatabase(customerInfo);
+               Alert.alert("Restored", "Your purchases have been synchronized with the database."); 
+             } catch(e) {}
         }}>
           <AppText variant="caption1" color={Colors.grayscale.silver}>Already have a plan? Restore Purchases</AppText>
         </TouchableOpacity>

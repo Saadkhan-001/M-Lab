@@ -1,13 +1,14 @@
 import React, { useEffect, useState } from 'react';
-import { View, StyleSheet, TouchableOpacity, ScrollView, Dimensions, ActivityIndicator } from 'react-native';
+import { View, StyleSheet, TouchableOpacity, ScrollView, Dimensions, ActivityIndicator, Modal, TextInput } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ArrowLeft, Phone, Hash, Calendar, Shield, Clipboard, MessageSquare, Edit3, Stethoscope, Clock, CheckCircle2 as CheckCircle } from 'lucide-react-native';
-import { doc, getDoc, collection, query, where, onSnapshot } from 'firebase/firestore';
+import { ArrowLeft, Phone, Hash, Calendar, Shield, Clipboard, MessageSquare, Edit3, Stethoscope, Clock, CheckCircle2 as CheckCircle, X } from 'lucide-react-native';
+import { doc, getDoc, updateDoc, collection, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from '../../../config/firebase';
 import { Colors } from '../../../constants/Colors';
 import AppText from '../../../components/AppText';
 import AppButton from '../../../components/AppButton';
+import { useUser } from '@clerk/clerk-expo';
 
 const { width } = Dimensions.get('window');
 
@@ -24,51 +25,73 @@ interface TestRecord {
 export default function PatientProfile() {
   const { id } = useLocalSearchParams();
   const router = useRouter();
+  const { user } = useUser();
   const [patient, setPatient] = useState<any>(null);
   const [tests, setTests] = useState<TestRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  
+  // Edit Patient State
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [editForm, setEditForm] = useState({ name: '', phone: '', age: '', gender: 'Male' as 'Male' | 'Female' | 'Other' });
+  const [isUpdating, setIsUpdating] = useState(false);
 
   useEffect(() => {
-    if (!id) return;
+    if (!id || !user?.id) return;
     
-    const labId = 'demo-lab-123';
-    const patientRef = doc(db, 'laboratories', labId, 'patients', id as string);
-    const testsRef = collection(db, 'laboratories', labId, 'tests');
-    const q = query(testsRef, where('patientId', '==', id));
+    let unsubscribeTests: any;
 
-    // Fetch Patient Data
-    const fetchPatient = async () => {
+    const fetchProfileData = async () => {
       try {
+        const userRef = doc(db, 'users', user.id);
+        const userSnap = await getDoc(userRef);
+        const labId = userSnap.data()?.laboratoryId;
+        
+        if (!labId) {
+          setLoading(false);
+          return;
+        }
+
+        const patientRef = doc(db, 'laboratories', labId, 'patients', id as string);
+        const testsRef = collection(db, 'laboratories', labId, 'tests');
+        const q = query(testsRef, where('patientId', '==', id));
+
+        // Fetch Patient Data
         const docSnap = await getDoc(patientRef);
         if (docSnap.exists()) {
-          setPatient(docSnap.data());
+          const pData = docSnap.data();
+          setPatient(pData);
+          setEditForm({ name: pData.name, phone: pData.phone, age: String(pData.age), gender: pData.gender });
         }
+
+        // Listen to Test History
+        unsubscribeTests = onSnapshot(q, (snapshot) => {
+          const testList = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+          })) as TestRecord[];
+          
+          testList.sort((a, b) => {
+            const dateA = a.createdAt?.toDate?.() || new Date(0);
+            const dateB = b.createdAt?.toDate?.() || new Date(0);
+            return dateB.getTime() - dateA.getTime();
+          });
+
+          setTests(testList);
+          setLoading(false);
+        });
+
       } catch (error) {
-        console.error("Error fetching patient:", error);
+        console.error("Error fetching patient profile:", error);
+        setLoading(false);
       }
     };
 
-    // Listen to Test History
-    const unsubscribeTests = onSnapshot(q, (snapshot) => {
-      const testList = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as TestRecord[];
-      
-      // Sort client-side to avoid Firebase Index Requirement
-      testList.sort((a, b) => {
-        const dateA = a.createdAt?.toDate?.() || new Date(0);
-        const dateB = b.createdAt?.toDate?.() || new Date(0);
-        return dateB.getTime() - dateA.getTime();
-      });
+    fetchProfileData();
 
-      setTests(testList);
-      setLoading(false);
-    });
-
-    fetchPatient();
-    return () => unsubscribeTests();
-  }, [id]);
+    return () => {
+      if (unsubscribeTests) unsubscribeTests();
+    };
+  }, [id, user?.id]);
 
   if (loading) {
     return (
@@ -87,7 +110,7 @@ export default function PatientProfile() {
           <ArrowLeft size={24} color={Colors.grayscale.black} />
         </TouchableOpacity>
         <AppText variant="title3" style={styles.headerTitle}>Patient Profile</AppText>
-        <TouchableOpacity style={styles.editButton}>
+        <TouchableOpacity style={styles.editButton} onPress={() => setIsEditModalOpen(true)}>
           <Edit3 size={20} color={Colors.primary.navy} />
         </TouchableOpacity>
       </View>
@@ -178,13 +201,82 @@ export default function PatientProfile() {
       <View style={styles.footerActions}>
         <AppButton 
           title="Add New Test" 
-          onPress={() => {}} 
+          onPress={() => router.push(`/(app)/(tabs)/billing?patientId=${id}`)} 
           buttonStyle={{ flex: 1, marginRight: 12 }} 
         />
         <TouchableOpacity style={styles.messageButton}>
           <MessageSquare size={24} color={Colors.primary.navy} />
         </TouchableOpacity>
       </View>
+
+      {/* Edit Patient Modal */}
+      <Modal visible={isEditModalOpen} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+             <View style={styles.modalHeader}>
+                <AppText variant="title2">Edit Patient Info</AppText>
+                <TouchableOpacity onPress={() => setIsEditModalOpen(false)}><X size={24} color="black" /></TouchableOpacity>
+             </View>
+
+             <ScrollView style={{ padding: 24 }}>
+                <View style={styles.formGroup}>
+                  <AppText variant="caption1" style={styles.label}>Patient Full Name</AppText>
+                  <TextInput style={styles.input} placeholder="John Doe" value={editForm.name} onChangeText={v => setEditForm({...editForm, name: v})} />
+                </View>
+                <View style={styles.formGroup}>
+                  <AppText variant="caption1" style={styles.label}>Phone Number</AppText>
+                  <TextInput style={styles.input} placeholder="03XXXXXXXXX" keyboardType="phone-pad" value={editForm.phone} onChangeText={v => setEditForm({...editForm, phone: v})} />
+                </View>
+                <View style={{ flexDirection: 'row', gap: 16 }}>
+                  <View style={[styles.formGroup, { flex: 1 }]}>
+                    <AppText variant="caption1" style={styles.label}>Age</AppText>
+                    <TextInput style={styles.input} placeholder="25" keyboardType="numeric" value={editForm.age} onChangeText={v => setEditForm({...editForm, age: v})} />
+                  </View>
+                  <View style={[styles.formGroup, { flex: 1 }]}>
+                    <AppText variant="caption1" style={styles.label}>Gender</AppText>
+                    <View style={styles.genderRow}>
+                       {(['Male', 'Female'] as const).map(g => (
+                         <TouchableOpacity key={g} style={[styles.genderBtn, editForm.gender === g && styles.genderBtnActive]} onPress={() => setEditForm({...editForm, gender: g})}>
+                            <AppText variant="caption1" color={editForm.gender === g ? 'white' : 'black'}>{g}</AppText>
+                         </TouchableOpacity>
+                       ))}
+                    </View>
+                  </View>
+                </View>
+                
+                <AppButton 
+                  title={isUpdating ? "Saving..." : "Save Changes"} 
+                  disabled={isUpdating} 
+                  buttonStyle={{ marginTop: 24 }} 
+                  onPress={async () => {
+                    setIsUpdating(true);
+                    try {
+                      const userRef = doc(db, 'users', user?.id || '');
+                      const userSnap = await getDoc(userRef);
+                      const labId = userSnap.data()?.laboratoryId;
+                      if (!labId) throw new Error("Lab ID not found");
+
+                      const patientRef = doc(db, 'laboratories', labId, 'patients', id as string);
+                      await updateDoc(patientRef, {
+                        name: editForm.name,
+                        phone: editForm.phone,
+                        age: parseInt(editForm.age) || 0,
+                        gender: editForm.gender
+                      });
+                      
+                      setPatient({ ...patient, ...editForm, age: parseInt(editForm.age) || 0 });
+                      setIsEditModalOpen(false);
+                    } catch(e) {
+                      console.error(e);
+                    } finally {
+                      setIsUpdating(false);
+                    }
+                  }} 
+                />
+             </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -215,4 +307,13 @@ const styles = StyleSheet.create({
   emptyHistory: { alignItems: 'center', paddingVertical: 40, backgroundColor: Colors.grayscale.offWhite, borderRadius: 24, borderStyle: 'dashed', borderWidth: 1, borderColor: Colors.grayscale.lightGray },
   footerActions: { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: Colors.grayscale.white, paddingHorizontal: 24, paddingVertical: 16, flexDirection: 'row', alignItems: 'center', borderTopWidth: 1, borderTopColor: Colors.grayscale.lightGray },
   messageButton: { width: 56, height: 56, borderRadius: 16, backgroundColor: Colors.grayscale.lightGray, justifyContent: 'center', alignItems: 'center' },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  modalContent: { backgroundColor: 'white', borderTopLeftRadius: 32, borderTopRightRadius: 32, height: '80%' },
+  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 24, paddingVertical: 20, borderBottomWidth: 1, borderBottomColor: Colors.grayscale.lightGray },
+  formGroup: { marginBottom: 20 },
+  label: { color: Colors.grayscale.darkGray, marginBottom: 8, marginLeft: 4 },
+  input: { backgroundColor: Colors.grayscale.lightGray, borderRadius: 16, padding: 16, fontFamily: 'Onest-Medium', fontSize: 16, color: Colors.grayscale.black },
+  genderRow: { flexDirection: 'row', gap: 12 },
+  genderBtn: { flex: 1, height: 54, borderRadius: 16, backgroundColor: Colors.grayscale.lightGray, justifyContent: 'center', alignItems: 'center' },
+  genderBtnActive: { backgroundColor: Colors.primary.navy },
 });

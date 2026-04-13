@@ -71,11 +71,11 @@ export default function DashboardScreen() {
     }
   }, [user]);
 
-  // Real-time Stats Listener
+  // Unified Real-time Listener for Dashboard
   useEffect(() => {
     if (!user?.id) return;
 
-    const fetchStats = async () => {
+    const fetchDashboardData = async () => {
       try {
         const userRef = doc(db, 'users', user.id);
         const userSnap = await getDoc(userRef);
@@ -84,82 +84,57 @@ export default function DashboardScreen() {
           const labId = userSnap.data().laboratoryId;
           if (!labId) return;
 
-          const statsRef = doc(db, 'laboratories', labId, 'stats', 'summary');
-          const unsubscribe = onSnapshot(statsRef, (snapshot) => {
-            if (snapshot.exists()) {
-              setStats(snapshot.data());
-            } else {
-              // Set initial empty stats for new lab
-              setStats({
-                pendingTests: 0,
-                doneTests: 0,
-                accounting: { paid: 0, remaining: 0, discounted: 0 }
-              });
-            }
-          });
-
-          return unsubscribe;
-        }
-      } catch (error) {
-        console.error("Stats Listener Error: ", error);
-      }
-    };
-
-    let unsubscribe: any;
-    fetchStats().then(unsub => unsubscribe = unsub);
-
-    return () => {
-      if (unsubscribe) unsubscribe();
-    };
-  }, [user]);
-
-  // Real-time Pending Reports Listener
-  useEffect(() => {
-    if (!user?.id) return;
-
-    const fetchReports = async () => {
-      try {
-        const userRef = doc(db, 'users', user.id);
-        const userSnap = await getDoc(userRef);
-        
-        if (userSnap.exists()) {
-          const labId = userSnap.data().laboratoryId;
-          if (!labId) return;
-
+          // 1. Listen to Tests Collection
           const testsRef = collection(db, 'laboratories', labId, 'tests');
-          const q = query(
-            testsRef, 
-            where('paymentStatus', '==', 'paid'), 
-            where('reportStatus', 'in', ['pending', 'reviewing']),
-            limit(5)
-          );
+          const unsubscribeTests = onSnapshot(testsRef, (snapshot) => {
+            const allTests = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() as any }));
+            
+            const pending = allTests.filter(t => t.reportStatus === 'pending' || t.reportStatus === 'reviewing');
+            const completed = allTests.filter(t => t.reportStatus === 'completed');
+            
+            // Show recent pending tests in the list
+            const sortedPending = [...pending].sort((a,b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+            setPendingReports(sortedPending.slice(0, 5));
 
-          const unsubscribe = onSnapshot(q, (snapshot) => {
-            const reports = snapshot.docs.map(doc => ({
-              id: doc.id,
-              ...doc.data()
+            setStats((prev: any) => ({
+              ...prev,
+              pendingTests: pending.length,
+              doneTests: completed.length,
+              accounting: prev?.accounting || { paid: 0, remaining: 0, discounted: 0 }
             }));
-            setPendingReports(reports);
-          }, (error) => {
-            if (error.message.includes('requires an index')) {
-              console.warn("Dashboard Index is still building... please wait 3-5 minutes.");
-            } else {
-              console.error("Reports Listener Error: ", error);
-            }
           });
 
-          return unsubscribe;
+          // 2. Listen to Invoices for Financial Summary
+          const invoicesRef = collection(db, 'laboratories', labId, 'invoices');
+          const unsubscribeInvoices = onSnapshot(invoicesRef, (snapshot) => {
+            const allInvoices = snapshot.docs.map(doc => doc.data());
+            
+            const paid = allInvoices.reduce((sum, inv) => sum + (inv.paid || 0), 0);
+            const remaining = allInvoices.reduce((sum, inv) => sum + (inv.balance || 0), 0);
+            const discounted = allInvoices.reduce((sum, inv) => sum + (inv.discount || 0), 0);
+
+            setStats((prev: any) => ({
+              pendingTests: prev?.pendingTests || 0,
+              doneTests: prev?.doneTests || 0,
+              accounting: { paid, remaining, discounted }
+            }));
+          });
+
+          return () => {
+            unsubscribeTests();
+            unsubscribeInvoices();
+          };
         }
       } catch (error) {
-        console.error("Reports Listener Error: ", error);
+        console.error("Dashboard Listener Error: ", error);
       }
     };
 
-    let unsubscribe: any;
-    fetchReports().then(unsub => unsubscribe = unsub);
+    let cleanup: any;
+    fetchDashboardData().then(fn => cleanup = fn);
 
     return () => {
-      if (unsubscribe) unsubscribe();
+      if (cleanup) cleanup();
     };
   }, [user]);
 

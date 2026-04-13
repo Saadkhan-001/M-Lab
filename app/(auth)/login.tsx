@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   View,
   TextInput,
@@ -15,9 +15,11 @@ import { BlurView } from 'expo-blur';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Mail, Lock, Eye, EyeOff, FlaskConical, ArrowRight } from 'lucide-react-native';
 import * as WebBrowser from 'expo-web-browser';
-import { useOAuth } from '@clerk/clerk-expo';
+import * as Linking from 'expo-linking';
+import { useOAuth, useSignIn } from '@clerk/clerk-expo';
 import { Link, useRouter } from 'expo-router';
 import { Colors } from '../../constants/Colors';
+import { BiometricService } from '../../utils/biometric';
 import AppButton from '../../components/AppButton';
 import AppText from '../../components/AppText';
 
@@ -53,9 +55,61 @@ export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [failedAttempts, setFailedAttempts] = useState(0);
   const router = useRouter();
   
+  const { isLoaded, signIn, setActive } = useSignIn();
   const { startOAuthFlow } = useOAuth({ strategy: 'oauth_google' });
+
+  // Auto-trigger biometrics on mount
+  useEffect(() => {
+    if (isLoaded && failedAttempts < 5) {
+      handleBiometricAuth();
+    }
+  }, [isLoaded]);
+
+  const handleBiometricAuth = async () => {
+    const enabled = await BiometricService.isEnabled();
+    if (!enabled) return;
+
+    try {
+      const result = await BiometricService.authenticate();
+      if (result.success) {
+        const creds = await BiometricService.getCredentials();
+        if (creds) {
+          await performSignIn(creds.email, creds.password);
+        }
+      } else {
+        setFailedAttempts(prev => prev + 1);
+      }
+    } catch (error) {
+      console.error('Biometric authentication error:', error);
+    }
+  };
+
+  const performSignIn = async (identifier: string, pass: string) => {
+    if (!isLoaded) return;
+    setIsLoading(true);
+    try {
+      const result = await signIn.create({
+        identifier,
+        password: pass,
+      });
+
+      if (result.status === 'complete') {
+        await setActive({ session: result.createdSessionId });
+      } else {
+        console.warn('Sign-in requirement missing:', result.status);
+        Alert.alert('Sign In', 'Additional steps required: ' + result.status);
+      }
+    } catch (err: any) {
+      const message = err.errors?.[0]?.longMessage || err.message || 'Login failed';
+      Alert.alert('Sign In Failed', message);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const handleForgotPassword = () => {
     Alert.alert(
@@ -75,12 +129,18 @@ export default function LoginScreen() {
   };
 
   const handleLogin = () => {
-    console.log('Standard Login attempt:', email);
+    if (!email || !password) {
+      Alert.alert('Missing Info', 'Please enter your email and password');
+      return;
+    }
+    performSignIn(email, password);
   };
 
   const triggerGoogleOAuth = React.useCallback(async () => {
     try {
-      const { createdSessionId, setActive } = await startOAuthFlow();
+      const { createdSessionId, setActive } = await startOAuthFlow({
+        redirectUrl: Linking.createURL('/oauth-native-callback', { scheme: 'labmanagementapp' }),
+      });
 
       if (createdSessionId && setActive) {
         await setActive({ session: createdSessionId });
@@ -170,8 +230,9 @@ export default function LoginScreen() {
             </TouchableOpacity>
 
             <AppButton 
-              title="Sign In" 
+              title={isLoading ? "Signing In..." : "Sign In"} 
               onPress={handleLogin}
+              disabled={isLoading}
               buttonStyle={{ marginBottom: 16 }}
             />
 

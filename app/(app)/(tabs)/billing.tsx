@@ -9,6 +9,7 @@ import { useUser } from '@clerk/clerk-expo';
 import { Colors } from '../../../constants/Colors';
 import AppText from '../../../components/AppText';
 import AppButton from '../../../components/AppButton';
+import { useLocalSearchParams } from 'expo-router';
 
 // Interfaces
 interface TestCatalogItem {
@@ -29,6 +30,7 @@ interface Patient {
 
 export default function BillingScreen() {
   const { user } = useUser();
+  const { patientId } = useLocalSearchParams();
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [patients, setPatients] = useState<Patient[]>([]);
@@ -36,6 +38,7 @@ export default function BillingScreen() {
   
   // Dynamic Catalog State
   const [testCatalog, setTestCatalog] = useState<TestCatalogItem[]>([]);
+  const [isCatalogLoading, setIsCatalogLoading] = useState(true);
   
   // Registration Modal State
   const [isRegisterOpen, setIsRegisterOpen] = useState(false);
@@ -59,6 +62,7 @@ export default function BillingScreen() {
 
     const fetchCatalog = async () => {
       try {
+        setIsCatalogLoading(true);
         const userRef = doc(db, 'users', user.id);
         const userSnap = await getDoc(userRef);
         const labId = userSnap.data()?.laboratoryId;
@@ -67,11 +71,13 @@ export default function BillingScreen() {
         const catalogRef = collection(db, 'laboratories', labId, 'test_catalog');
         const unsubscribe = onSnapshot(catalogRef, (snapshot) => {
           setTestCatalog(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as TestCatalogItem[]);
+          setIsCatalogLoading(false);
         });
 
         return unsubscribe;
       } catch (error) {
         console.error("Catalog Listener Error: ", error);
+        setIsCatalogLoading(false);
       }
     };
 
@@ -81,7 +87,7 @@ export default function BillingScreen() {
     return () => {
       if (unsubscribe) unsubscribe();
     };
-  }, [user]);
+  }, [user?.id]);
 
   // Real-time patient lookup
   useEffect(() => {
@@ -120,7 +126,31 @@ export default function BillingScreen() {
     return () => {
       if (unsubscribe) unsubscribe();
     };
-  }, [searchQuery, user]);
+  }, [searchQuery, user?.id]);
+
+  // Pre-select patient if routed from Patient Profile
+  useEffect(() => {
+    if (!patientId || !user?.id) return;
+    
+    const fetchSpecificPatient = async () => {
+      try {
+        const userRef = doc(db, 'users', user.id);
+        const userSnap = await getDoc(userRef);
+        const labId = userSnap.data()?.laboratoryId;
+        if (!labId) return;
+
+        const patientRef = doc(db, 'laboratories', labId, 'patients', patientId as string);
+        const pSnap = await getDoc(patientRef);
+        if (pSnap.exists()) {
+           setSelectedPatient({ id: pSnap.id, ...pSnap.data() } as Patient);
+        }
+      } catch (e) {
+        console.error("Auto-select Patient Error:", e);
+      }
+    };
+    
+    fetchSpecificPatient();
+  }, [patientId, user?.id]);
 
   // Calculations
   const totalPrice = useMemo(() => {
@@ -308,7 +338,11 @@ export default function BillingScreen() {
                 </AppText>
                 {selectedTests.find(t => t.id === test.id) && <Check size={12} color={Colors.grayscale.white} style={{ marginLeft: 6 }} />}
               </TouchableOpacity>
-            )) : <AppText variant="caption1" color={Colors.grayscale.silver}>Loading repository...</AppText>}
+            )) : (
+              isCatalogLoading ? 
+                <AppText variant="caption1" color={Colors.grayscale.silver}>Loading repository...</AppText> :
+                <AppText variant="caption1" color={Colors.grayscale.silver}>Repository empty. Add tests in Settings.</AppText>
+            )}
           </View>
         </View>
 

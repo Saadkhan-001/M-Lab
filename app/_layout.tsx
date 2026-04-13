@@ -1,7 +1,9 @@
 import React, { useEffect } from 'react';
 import { View } from 'react-native';
-import { ClerkProvider, ClerkLoaded, useAuth } from '@clerk/clerk-expo';
-import { Stack, useRouter, useSegments } from 'expo-router';
+import { ClerkProvider, ClerkLoaded, useAuth, useUser } from '@clerk/clerk-expo';
+import { Stack, useRouter, useSegments, useRootNavigationState } from 'expo-router';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '../config/firebase';
 import * as SecureStore from 'expo-secure-store';
 import { StatusBar } from 'expo-status-bar';
 import { useFonts } from 'expo-font';
@@ -38,20 +40,50 @@ const publishableKey = process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY;
 
 function RootLayoutNav() {
   const { isLoaded, isSignedIn } = useAuth();
-  const segments = useSegments();
+  const { user } = useUser();
+  const segments = useSegments() as string[];
   const router = useRouter();
+  const rootNavigationState = useRootNavigationState();
 
   useEffect(() => {
-    if (!isLoaded) return;
+    if (!isLoaded || !rootNavigationState?.key) return;
 
     const inAuthGroup = segments[0] === '(auth)';
+    const inAppGroup = segments[0] === '(app)';
 
-    if (isSignedIn && inAuthGroup) {
-      router.replace('/(app)/(tabs)');
-    } else if (!isSignedIn && !inAuthGroup) {
-      router.replace('/(auth)/login');
+    if (!isSignedIn && !inAuthGroup) {
+      // Redirect to login if not signed in
+      setTimeout(() => router.replace('/(auth)/login'), 0);
+    } else if (isSignedIn && user) {
+      // If signed in, we check the user profile for onboarding status
+      const checkProfileAndRedirect = async () => {
+        try {
+          const docRef = doc(db, 'users', user.id);
+          const docSnap = await getDoc(docRef);
+          
+          const profile = docSnap.exists() ? docSnap.data() : null;
+          const isOnboarded = profile?.isOnboarded === true;
+          const currentSubSegment = segments.length > 1 ? segments[1] : null;
+
+          if (!isOnboarded) {
+             // User needs to setup their lab
+             if (currentSubSegment !== 'onboarding') {
+                setTimeout(() => router.replace('/(app)/onboarding'), 0);
+             }
+          } else if (inAuthGroup || currentSubSegment === 'onboarding') {
+             // User is already onboarded, send to tabs if in auth or on onboarding screen
+             setTimeout(() => router.replace('/(app)/(tabs)'), 0);
+          }
+        } catch (error) {
+          console.error("Redirection Error:", error);
+          // Fallback to tabs if profile check fails
+          setTimeout(() => router.replace('/(app)/(tabs)'), 0);
+        }
+      };
+
+      checkProfileAndRedirect();
     }
-  }, [isSignedIn, isLoaded, segments]);
+  }, [isSignedIn, isLoaded, segments, user, rootNavigationState?.key]);
 
   return (
     <Stack screenOptions={{ headerShown: false }}>

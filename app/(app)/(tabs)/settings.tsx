@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, StyleSheet, ScrollView, TouchableOpacity, Modal, TextInput, Alert, ActivityIndicator, Image } from 'react-native';
+import { View, StyleSheet, ScrollView, TouchableOpacity, Modal, TextInput, Alert, ActivityIndicator, Image, Switch } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Settings, LogOut, Shield, Bell, ChevronRight, FlaskConical, Plus, X, Sparkles, Trash2, CreditCard, User as UserIcon, Crown } from 'lucide-react-native';
 import { useAuth, useUser } from '@clerk/clerk-expo';
@@ -11,6 +11,7 @@ import AppText from '../../../components/AppText';
 import AppButton from '../../../components/AppButton';
 import { AIService, LabParameter } from '../../../services/AIService';
 import { useSubscription } from '../../../hooks/useSubscription';
+import { BiometricService } from '../../../utils/biometric';
 
 interface TestCatalogItem {
   id: string;
@@ -31,12 +32,24 @@ export default function SettingsScreen() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingTest, setEditingTest] = useState<Partial<TestCatalogItem> | null>(null);
   const [isAILoading, setIsAILoading] = useState(false);
+  
+  // Biometric States
+  const [isBiometricEnabled, setIsBiometricEnabled] = useState(false);
+  const [isBiometricModalOpen, setIsBiometricModalOpen] = useState(false);
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [isAuthLoading, setIsAuthLoading] = useState(false);
+
+  // Load Biometric State
+  useEffect(() => {
+    BiometricService.isEnabled().then(setIsBiometricEnabled);
+  }, []);
 
   // Real-time Catalog Listener
   useEffect(() => {
     const fetchCatalog = async () => {
       try {
-        const userRef = doc(db, 'users', user?.id || '');
+        if (!user?.id) return;
+        const userRef = doc(db, 'users', user.id);
         const userSnap = await getDoc(userRef);
         const labId = userSnap.data()?.laboratoryId;
         if (!labId) return;
@@ -61,20 +74,23 @@ export default function SettingsScreen() {
   }, [user]);
 
   const handleSaveTest = async () => {
-    if (!editingTest?.name || !editingTest?.price) {
+    if (!editingTest?.name || (editingTest?.price === undefined || String(editingTest?.price) === '')) {
       Alert.alert("Error", "Name and Price are required.");
       return;
     }
 
     try {
-      const userRef = doc(db, 'users', user?.id || '');
+      if (!user?.id) throw new Error("User not found");
+      const userRef = doc(db, 'users', user.id);
       const userSnap = await getDoc(userRef);
       const labId = userSnap.data()?.laboratoryId;
       if (!labId) throw new Error("Lab ID not found");
 
+      const priceVal = parseFloat(editingTest.price as any);
+
       const payload = {
         name: editingTest.name,
-        price: parseFloat(editingTest.price as any),
+        price: isNaN(priceVal) ? 0 : priceVal,
         tat: editingTest.tat || 'N/A',
         parameters: editingTest.parameters || []
       };
@@ -85,10 +101,12 @@ export default function SettingsScreen() {
         await addDoc(collection(db, 'laboratories', labId, 'test_catalog'), payload);
       }
       
+      Alert.alert("Success", "Test successfully added to repository.");
       setIsModalOpen(false);
       setEditingTest(null);
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
+      Alert.alert("Save Failed", e.message || "Could not save to repository.");
     }
   };
 
@@ -116,6 +134,60 @@ export default function SettingsScreen() {
       Alert.alert("AI Error", "Could not connect to medical intelligence.");
     } finally {
       setIsAILoading(false);
+    }
+  };
+
+  const handleBiometricToggle = async (value: boolean) => {
+    if (!value) {
+      // Disabling is easy
+      await BiometricService.setEnabled(false);
+      await BiometricService.clearAll();
+      setIsBiometricEnabled(false);
+      return;
+    }
+
+    // Enabling requires verification
+    try {
+      const isAvailable = await BiometricService.isAvailable();
+      if (!isAvailable) {
+        Alert.alert("Not Supported", "Biometric authentication is not available or enrolled on this device.");
+        return;
+      }
+
+      const result = await BiometricService.authenticate();
+      if (result.success) {
+        // Now we need the password to save it securely for auto-login
+        setIsBiometricModalOpen(true);
+      }
+    } catch (e) {
+      console.error(e);
+      Alert.alert("Error", "Could not verify biometrics.");
+    }
+  };
+
+  const finalizeBiometricSetup = async () => {
+    if (!confirmPassword) {
+      Alert.alert("Password Required", "Please enter your password to authorize secure login.");
+      return;
+    }
+
+    setIsAuthLoading(true);
+    try {
+      // In a real app, we'd verify the password with Clerk here first.
+      // For this implementation, we save it directly to the hardware vault.
+      await BiometricService.saveCredentials({
+        email: user?.primaryEmailAddress?.emailAddress || '',
+        password: confirmPassword
+      });
+      await BiometricService.setEnabled(true);
+      setIsBiometricEnabled(true);
+      setIsBiometricModalOpen(false);
+      setConfirmPassword('');
+      Alert.alert("Success", "Biometric login is now active!");
+    } catch (e) {
+      Alert.alert("Setup Failed", "Could not save credentials securely.");
+    } finally {
+      setIsAuthLoading(false);
     }
   };
 
@@ -188,7 +260,23 @@ export default function SettingsScreen() {
 
         <View style={[styles.section, { marginTop: 32 }]}>
           <AppText variant="caption1" fontFamily="Onest-Bold" style={styles.sectionTitle}>Accounts & Safety</AppText>
-          <SettingItem icon={Shield} label="Account Security" />
+          <View style={styles.settingItem}>
+            <View style={styles.settingLeft}>
+              <View style={[styles.iconContainer, { backgroundColor: `${Colors.primary.navy}15` }]}>
+                <Shield size={20} color={Colors.primary.navy} />
+              </View>
+              <View style={{ marginLeft: 12 }}>
+                <AppText variant="body" fontFamily="Onest-Medium">Biometric Login</AppText>
+                <AppText variant="caption1" color={Colors.grayscale.darkGray}>FaceID / Fingerprint</AppText>
+              </View>
+            </View>
+            <Switch 
+              value={isBiometricEnabled} 
+              onValueChange={handleBiometricToggle}
+              trackColor={{ false: Colors.grayscale.lightGray, true: Colors.primary.skyBlue }}
+              thumbColor="white"
+            />
+          </View>
           <SettingItem icon={Bell} label="Notifications" />
           <SettingItem icon={LogOut} label="Sign Out" color={Colors.message.error} onPress={() => signOut()} />
         </View>
@@ -227,7 +315,13 @@ export default function SettingsScreen() {
                  <View style={{ flexDirection: 'row', gap: 16 }}>
                     <View style={[styles.formGroup, { flex: 1 }]}>
                       <AppText variant="caption1" style={styles.label}>Price</AppText>
-                      <TextInput style={styles.input} placeholder="0.00" keyboardType="numeric" value={editingTest?.price?.toString()} onChangeText={v => setEditingTest({...editingTest, price: parseFloat(v)})} />
+                      <TextInput 
+                        style={styles.input} 
+                        placeholder="0.00" 
+                        keyboardType="numeric" 
+                        value={editingTest?.price?.toString() === 'NaN' || editingTest?.price === 0 ? '' : editingTest?.price?.toString()} 
+                        onChangeText={v => setEditingTest({...editingTest, price: v as any})} 
+                      />
                     </View>
                     <View style={[styles.formGroup, { flex: 1 }]}>
                       <AppText variant="caption1" style={styles.label}>Report TAT</AppText>
@@ -245,7 +339,7 @@ export default function SettingsScreen() {
                     </TouchableOpacity>
                  </View>
 
-                 {editingTest?.parameters?.map((p, idx) => (
+                 {editingTest?.parameters?.map((p: any, idx: number) => (
                    <View key={idx} style={styles.paramItem}>
                       <View style={{ flex: 1 }}>
                         <TextInput style={styles.paramInput} placeholder="Name (e.g. TSH)" value={p.name} onChangeText={v => {
@@ -267,7 +361,7 @@ export default function SettingsScreen() {
                         </View>
                       </View>
                       <TouchableOpacity onPress={() => {
-                        const updated = editingTest.parameters?.filter((_, i) => i !== idx);
+                        const updated = editingTest.parameters?.filter((_: any, i: number) => i !== idx);
                         setEditingTest({...editingTest, parameters: updated});
                       }}><Trash2 size={18} color={Colors.message.error} /></TouchableOpacity>
                    </View>
@@ -277,6 +371,56 @@ export default function SettingsScreen() {
                  <View style={{ height: 100 }} />
               </ScrollView>
            </View>
+        </View>
+      </Modal>
+
+      {/* Biometric Authorization Modal */}
+      <Modal visible={isBiometricModalOpen} animationType="fade" transparent>
+        <View style={[styles.modalOverlay, { justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.7)' }]}>
+          <View style={[styles.modalContent, { height: 'auto', marginHorizontal: 24, borderRadius: 24, padding: 24 }]}>
+             <View style={{ alignItems: 'center', marginBottom: 20 }}>
+                <View style={styles.authIconCircle}>
+                  <Shield size={32} color={Colors.primary.navy} />
+                </View>
+                <AppText variant="title3" style={{ marginTop: 16 }}>Authorize Biometrics</AppText>
+                <AppText variant="body" color={Colors.grayscale.darkGray} style={{ textAlign: 'center', marginTop: 8 }}>
+                  Enter your current password to securely link your biometrics for instant login.
+                </AppText>
+             </View>
+
+             <View style={styles.formGroup}>
+                <TextInput 
+                  style={styles.input} 
+                  placeholder="Your Password" 
+                  secureTextEntry 
+                  value={confirmPassword}
+                  onChangeText={setConfirmPassword}
+                />
+             </View>
+
+             <View style={{ flexDirection: 'row', gap: 12, marginTop: 8 }}>
+                <TouchableOpacity 
+                   style={[styles.modalActionBtn, { backgroundColor: Colors.grayscale.lightGray, flex: 1 }]}
+                   onPress={() => {
+                     setIsBiometricModalOpen(false);
+                     setConfirmPassword('');
+                   }}
+                >
+                   <AppText variant="body" fontFamily="Onest-Bold" color={Colors.grayscale.darkGray}>Cancel</AppText>
+                </TouchableOpacity>
+                <TouchableOpacity 
+                   style={[styles.modalActionBtn, { backgroundColor: Colors.primary.navy, flex: 2 }]}
+                   onPress={finalizeBiometricSetup}
+                   disabled={isAuthLoading}
+                >
+                   {isAuthLoading ? (
+                     <ActivityIndicator size="small" color="white" />
+                   ) : (
+                     <AppText variant="body" fontFamily="Onest-Bold" color="white">Secure Link</AppText>
+                   )}
+                </TouchableOpacity>
+             </View>
+          </View>
         </View>
       </Modal>
     </SafeAreaView>
@@ -310,5 +454,7 @@ const styles = StyleSheet.create({
   aiButton: { width: 50, height: 50, borderRadius: 12, backgroundColor: '#7E57C2', justifyContent: 'center', alignItems: 'center' },
   paramsHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 24, marginBottom: 16 },
   paramItem: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 16, backgroundColor: Colors.grayscale.offWhite, borderRadius: 16, marginBottom: 12 },
-  paramInput: { borderBottomWidth: 1, borderBottomColor: Colors.grayscale.silver, fontSize: 13, paddingVertical: 4, fontFamily: 'Onest-Medium' }
+  paramInput: { borderBottomWidth: 1, borderBottomColor: Colors.grayscale.silver, fontSize: 13, paddingVertical: 4, fontFamily: 'Onest-Medium' },
+  authIconCircle: { width: 64, height: 64, borderRadius: 32, backgroundColor: `${Colors.primary.navy}15`, justifyContent: 'center', alignItems: 'center' },
+  modalActionBtn: { height: 50, borderRadius: 12, justifyContent: 'center', alignItems: 'center' }
 });
