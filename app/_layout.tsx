@@ -85,6 +85,20 @@ function RootLayoutNav() {
     }
   }, [isSignedIn, isLoaded, segments, user, rootNavigationState?.key]);
 
+  // Sync RevenueCat with Clerk Identity
+  useEffect(() => {
+    const syncRCIdentity = async () => {
+      if (isSignedIn && user?.id) {
+        try {
+          await Purchases.logIn(user.id);
+        } catch (e) {
+          console.error("RC Sync Error:", e);
+        }
+      }
+    };
+    syncRCIdentity();
+  }, [isSignedIn, user?.id]);
+
 
   return (
     <Stack screenOptions={{ headerShown: false }}>

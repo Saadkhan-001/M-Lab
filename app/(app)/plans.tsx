@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { View, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Alert, Dimensions, Platform } from 'react-native';
+import { View, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Alert, Dimensions, Platform, Animated } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Check, X, Crown, Sparkles, ReceiptText, ShieldCheck, ArrowLeft, Zap } from 'lucide-react-native';
+import { Check, X, Crown, Sparkles, ReceiptText, ShieldCheck, ArrowLeft, Zap, Star, Shield, Gem } from 'lucide-react-native';
 import Purchases, { PurchasesPackage } from 'react-native-purchases';
 import { useRouter } from 'expo-router';
 import { Colors } from '../../constants/Colors';
@@ -15,6 +15,40 @@ import { REVENUECAT_CONFIG } from '../../config/RevenueCatConfig';
 
 const { width } = Dimensions.get('window');
 
+const PLAN_LEVELS = [
+  {
+    id: 'starter',
+    name: 'Starter',
+    icon: Zap,
+    color: '#4FC3F7',
+    tagline: 'For Small clinics',
+    features: ['Unlimited Patients', '100 Tests/Month', 'Basic Invoicing', 'Cloud Backup'],
+    monthlyPrice: '£15',
+    yearlyPrice: '£150',
+  },
+  {
+    id: 'professional',
+    name: 'Professional',
+    icon: Sparkles,
+    color: Colors.primary.navy,
+    tagline: 'Most Popular Choice',
+    features: ['AI Parameter Discovery', 'Custom Lab Branding', 'Financial Analytics', 'WhatsApp Automation'],
+    monthlyPrice: '£45',
+    yearlyPrice: '£450',
+    highlight: true,
+  },
+  {
+    id: 'elite',
+    name: 'Elite',
+    icon: Gem,
+    color: '#FFD700',
+    tagline: 'Multi-branch Lab',
+    features: ['Priority Support', 'Multi-User Access', 'Custom Domain Links', 'Advanced Security'],
+    monthlyPrice: '£95',
+    yearlyPrice: '£950',
+  }
+];
+
 export default function PlansScreen() {
   const router = useRouter();
   const { isPro } = useSubscription();
@@ -22,6 +56,7 @@ export default function PlansScreen() {
   const [offerings, setOfferings] = useState<PurchasesPackage[]>([]);
   const [loading, setLoading] = useState(true);
   const [purchasingId, setPurchasingId] = useState<string | null>(null);
+  const [billingCycle, setBillingCycle] = useState<'monthly' | 'yearly'>('yearly');
 
   const syncSubscriptionToDatabase = async (customerInfo: any) => {
     if (!user?.id) return;
@@ -32,10 +67,9 @@ export default function PlansScreen() {
       let planDisplayName = 'FREE PLAN';
       if (activeEntitlement) {
          const productId = activeEntitlement.productIdentifier;
-         if (productId.includes('monthly')) planDisplayName = 'Monthly Pro';
-         else if (productId.includes('yearly')) planDisplayName = 'Yearly Pro';
-         else if (productId.includes('lifetime')) planDisplayName = 'Lifetime Pro';
-         else planDisplayName = 'Pro Member';
+         if (productId.includes('starter')) planDisplayName = 'Starter Pro';
+         else if (productId.includes('elite')) planDisplayName = 'Elite Pro';
+         else planDisplayName = 'Professional Pro';
       }
 
       const userRef = doc(db, 'users', user.id);
@@ -45,7 +79,6 @@ export default function PlansScreen() {
         subscriptionUpdatedAt: new Date().toISOString()
       });
 
-      // Also update laboratory document if possible to reflect global pro status
       const userSnap = await getDoc(userRef);
       const labId = userSnap.data()?.laboratoryId;
       if (labId) {
@@ -54,9 +87,7 @@ export default function PlansScreen() {
            planName: planDisplayName,
         });
       }
-    } catch(e) {
-      console.error("Firebase sync error:", e);
-    }
+    } catch(e) { console.error(e); }
   };
 
   useEffect(() => {
@@ -72,7 +103,6 @@ export default function PlansScreen() {
         setLoading(false);
       }
     };
-
     fetchOfferings();
   }, []);
 
@@ -82,100 +112,134 @@ export default function PlansScreen() {
       const { customerInfo } = await Purchases.purchasePackage(pkg);
       if (customerInfo.entitlements.active[REVENUECAT_CONFIG.ENTITLEMENT_ID]) {
         await syncSubscriptionToDatabase(customerInfo);
-        Alert.alert("Success!", "You are now a PRO member. Your lab's AI is fully unlocked!");
-        router.replace('/(app)/(tabs)');
-      } else {
-        Alert.alert("Note", "Purchase completed. Refreshing status...");
+        Alert.alert("Success!", "You are now a PRO member!");
         router.replace('/(app)/(tabs)');
       }
     } catch (e: any) {
       if (!e.userCancelled) {
-        Alert.alert("Payment Failed", "We couldn't process your transaction. Please check your bank and try again.");
-        router.replace('/(app)/(tabs)');
+        Alert.alert("Payment Failed", "Could not process transaction.");
       }
     } finally {
       setPurchasingId(null);
     }
   };
 
-  const FeatureRow = ({ text }: { text: string }) => (
+  const FeatureRow = ({ text, color }: { text: string, color: string }) => (
     <View style={styles.featureRow}>
-      <View style={styles.checkBadge}><Check size={14} color="white" /></View>
-      <AppText variant="body" style={{ marginLeft: 12 }}>{text}</AppText>
+      <Check size={16} color={color} strokeWidth={3} />
+      <AppText variant="caption1" fontFamily="Onest-Medium" style={{ marginLeft: 10, color: Colors.grayscale.black }}>{text}</AppText>
     </View>
   );
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top']}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
           <ArrowLeft size={24} color={Colors.primary.navy} />
         </TouchableOpacity>
-        <AppText variant="title2">Lab Membership</AppText>
+        <AppText variant="title3">Lab Membership</AppText>
         <View style={{ width: 40 }} />
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         <View style={styles.hero}>
-          <View style={styles.crownContainer}>
-            <Crown size={40} color={Colors.primary.orange} />
-          </View>
-          <AppText variant="title1" style={styles.heroTitle}>Level Up Your Lab</AppText>
-          <AppText variant="body" color={Colors.grayscale.darkGray} style={styles.heroSub}>Unlock professional tools used by 500+ labs worldwide.</AppText>
+          <AppText variant="title1" style={styles.heroTitle}>Choose Your Plan</AppText>
+          <AppText variant="body" color={Colors.grayscale.darkGray} style={styles.heroSub}>Unlock professional lab automation tools.</AppText>
         </View>
 
-        <View style={styles.perksCard}>
-           <FeatureRow text="Unlimited AI Parameter Discovery" />
-           <FeatureRow text="Custom Invoice Branding & Logo" />
-           <FeatureRow text="Advanced CRM & Analytics" />
-           <FeatureRow text="Priority Multi-Device Sync" />
+        {/* Billing Toggle */}
+        <View style={styles.toggleWrapper}>
+          <TouchableOpacity 
+            style={[styles.toggleBtn, billingCycle === 'monthly' && styles.toggleBtnActive]} 
+            onPress={() => setBillingCycle('monthly')}
+          >
+            <AppText variant="caption1" fontFamily="Onest-Bold" color={billingCycle === 'monthly' ? 'white' : Colors.grayscale.darkGray}>Monthly</AppText>
+          </TouchableOpacity>
+          <TouchableOpacity 
+            style={[styles.toggleBtn, billingCycle === 'yearly' && styles.toggleBtnActive]} 
+            onPress={() => setBillingCycle('yearly')}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <AppText variant="caption1" fontFamily="Onest-Bold" color={billingCycle === 'yearly' ? 'white' : Colors.grayscale.darkGray}>Yearly</AppText>
+              <View style={styles.saveBadge}>
+                <AppText variant="caption1" style={{ fontSize: 8, color: 'white' }}>SAVE 20%</AppText>
+              </View>
+            </View>
+          </TouchableOpacity>
         </View>
 
         {loading ? (
           <ActivityIndicator size="large" color={Colors.primary.navy} style={{ marginTop: 40 }} />
         ) : (
-          <View style={styles.plansContainer}>
-            {offerings.length > 0 ? offerings.map((pkg, idx) => (
-              <TouchableOpacity 
-                key={pkg.identifier} 
-                style={[styles.planCard, idx === 1 && styles.highlightedCard]}
-                onPress={() => handlePurchase(pkg)}
-                disabled={!!purchasingId || isPro}
-              >
-                {idx === 1 && <View style={styles.bestValueBadge}><AppText variant="caption1" fontFamily="Onest-Bold" color="white">BEST VALUE</AppText></View>}
-                <View style={styles.planHeader}>
-                  <AppText variant="title2">{pkg.product.title.split('(')[0].trim()}</AppText>
-                  <AppText variant="title1" color={Colors.primary.navy}>{pkg.product.priceString}</AppText>
+          <View style={styles.plansList}>
+            {PLAN_LEVELS.map((plan) => {
+              // Try to find the matching RevenueCat package
+              const matchedPkg = offerings.find(p => 
+                p.identifier.toLowerCase().includes(plan.id) && 
+                p.identifier.toLowerCase().includes(billingCycle)
+              ) || (offerings.length > 0 ? (billingCycle === 'monthly' ? offerings[0] : offerings[1] || offerings[0]) : null);
+
+              const isCurrentLevel = false; // logic for current subscription level if needed
+
+              return (
+                <View key={plan.id} style={[styles.planCard, plan.highlight && styles.highlightedCard]}>
+                  {plan.highlight && (
+                    <View style={styles.bestValueBadge}>
+                      <Star size={12} color="white" />
+                      <AppText variant="caption1" fontFamily="Onest-Bold" color="white" style={{ marginLeft: 4 }}>RECOMMENDED</AppText>
+                    </View>
+                  )}
+                  
+                  <View style={styles.planCardHeader}>
+                    <View style={[styles.planIcon, { backgroundColor: `${plan.color}20` }]}>
+                      <plan.icon size={24} color={plan.color} />
+                    </View>
+                    <View>
+                      <AppText variant="title2">{plan.name}</AppText>
+                      <AppText variant="caption1" color={Colors.grayscale.darkGray}>{plan.tagline}</AppText>
+                    </View>
+                  </View>
+
+                  <View style={styles.priceContainer}>
+                    <AppText variant="title1" color={Colors.primary.navy}>
+                      {matchedPkg ? matchedPkg.product.priceString : (billingCycle === 'monthly' ? plan.monthlyPrice : plan.yearlyPrice)}
+                    </AppText>
+                    <AppText variant="caption1" color={Colors.grayscale.silver} style={{ marginLeft: 6 }}>
+                      / {billingCycle === 'monthly' ? 'mo' : 'yr'}
+                    </AppText>
+                  </View>
+
+                  <View style={styles.featureList}>
+                    {plan.features.map((f, i) => <FeatureRow key={i} text={f} color={plan.color} />)}
+                  </View>
+
+                  <AppButton 
+                    title={isPro ? "ALREADY ACTIVE" : (purchasingId === matchedPkg?.identifier ? "Processing..." : "Select Plan")} 
+                    onPress={() => matchedPkg && handlePurchase(matchedPkg)}
+                    disabled={!!purchasingId || isPro || !matchedPkg}
+                    buttonStyle={[styles.planBtn, plan.highlight && { backgroundColor: Colors.primary.navy }]}
+                    textStyle={plan.highlight ? { color: 'white' } : { color: Colors.primary.navy }}
+                  />
                 </View>
-                <AppButton 
-                  title={isPro ? "ALREADY ACTIVE" : (purchasingId === pkg.identifier ? "Processing..." : "Upgrade Now")} 
-                  onPress={() => handlePurchase(pkg)}
-                  disabled={!!purchasingId || isPro}
-                  buttonStyle={{ marginTop: 20 }}
-                />
-              </TouchableOpacity>
-            )) : (
-              // Fallback UI if no packages are configured in RevenueCat yet
-              <View style={styles.planCard}>
-                <AppText variant="title3">Standard Pro Plan</AppText>
-                <AppText variant="caption1" color={Colors.grayscale.darkGray} style={{ marginTop: 8 }}>Configuration Pending in RevenueCat Dashboard</AppText>
-                <AppButton title="Unavailable" disabled buttonStyle={{ marginTop: 20 }} />
-              </View>
-            )}
+              );
+            })}
           </View>
         )}
 
-        <TouchableOpacity style={styles.restoreBtn} onPress={async () => {
-             try { 
-               const customerInfo = await Purchases.restorePurchases(); 
-               await syncSubscriptionToDatabase(customerInfo);
-               Alert.alert("Restored", "Your purchases have been synchronized with the database."); 
-             } catch(e) {}
-        }}>
-          <AppText variant="caption1" color={Colors.grayscale.silver}>Already have a plan? Restore Purchases</AppText>
+        <TouchableOpacity 
+          style={styles.restoreBtn} 
+          onPress={async () => {
+            try { 
+              const customerInfo = await Purchases.restorePurchases(); 
+              await syncSubscriptionToDatabase(customerInfo);
+              Alert.alert("Restored", "Your subscription is now active!"); 
+            } catch(e) {}
+          }}
+        >
+          <AppText variant="caption1" color={Colors.grayscale.silver}>Have a subscription? Restore here</AppText>
         </TouchableOpacity>
         
-        <View style={{ height: 40 }} />
+        <View style={{ height: 60 }} />
       </ScrollView>
     </SafeAreaView>
   );
@@ -186,17 +250,22 @@ const styles = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 24, paddingVertical: 16 },
   backButton: { width: 40, height: 40, borderRadius: 12, backgroundColor: Colors.grayscale.offWhite, justifyContent: 'center', alignItems: 'center' },
   scrollContent: { paddingHorizontal: 24, paddingBottom: 40 },
-  hero: { alignItems: 'center', marginTop: 20, marginBottom: 32 },
-  crownContainer: { width: 80, height: 80, borderRadius: 30, backgroundColor: '#FFF9C4', justifyContent: 'center', alignItems: 'center', marginBottom: 16 },
+  hero: { alignItems: 'center', marginTop: 10, marginBottom: 24 },
   heroTitle: { textAlign: 'center', color: Colors.primary.navy },
-  heroSub: { textAlign: 'center', marginTop: 8, paddingHorizontal: 20 },
-  perksCard: { backgroundColor: Colors.grayscale.offWhite, borderRadius: 24, padding: 24, marginBottom: 32 },
-  featureRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 16 },
-  checkBadge: { width: 24, height: 24, borderRadius: 12, backgroundColor: Colors.message.success, justifyContent: 'center', alignItems: 'center' },
-  plansContainer: { gap: 16 },
-  planCard: { backgroundColor: 'white', borderRadius: 28, padding: 24, borderWidth: 1, borderColor: Colors.grayscale.lightGray, position: 'relative', overflow: 'hidden' },
-  highlightedCard: { borderColor: Colors.primary.navy, borderWidth: 2, backgroundColor: '#F0F7FF' },
-  bestValueBadge: { position: 'absolute', top: 0, right: 0, backgroundColor: Colors.primary.navy, paddingHorizontal: 16, paddingVertical: 6, borderBottomLeftRadius: 16 },
-  planHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  restoreBtn: { marginTop: 32, alignItems: 'center' }
+  heroSub: { textAlign: 'center', marginTop: 4, paddingHorizontal: 20 },
+  toggleWrapper: { flexDirection: 'row', alignSelf: 'center', backgroundColor: Colors.grayscale.offWhite, borderRadius: 20, padding: 4, marginBottom: 32 },
+  toggleBtn: { paddingHorizontal: 20, paddingVertical: 10, borderRadius: 16 },
+  toggleBtnActive: { backgroundColor: Colors.primary.navy },
+  saveBadge: { backgroundColor: Colors.primary.orange, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, marginLeft: 6 },
+  plansList: { gap: 20 },
+  planCard: { backgroundColor: 'white', borderRadius: 28, padding: 24, borderWidth: 1, borderColor: Colors.grayscale.lightGray, position: 'relative' },
+  highlightedCard: { borderColor: Colors.primary.navy, borderWidth: 2, shadowColor: Colors.primary.navy, shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.1, shadowRadius: 15, elevation: 5 },
+  bestValueBadge: { position: 'absolute', top: -14, alignSelf: 'center', backgroundColor: Colors.primary.navy, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12, flexDirection: 'row', alignItems: 'center' },
+  planCardHeader: { flexDirection: 'row', alignItems: 'center', gap: 16, marginBottom: 20 },
+  planIcon: { width: 56, height: 56, borderRadius: 18, justifyContent: 'center', alignItems: 'center' },
+  priceContainer: { flexDirection: 'row', alignItems: 'baseline', marginBottom: 24 },
+  featureList: { gap: 14, marginBottom: 28 },
+  featureRow: { flexDirection: 'row', alignItems: 'center' },
+  planBtn: { height: 54, borderRadius: 16, backgroundColor: Colors.grayscale.offWhite },
+  restoreBtn: { marginTop: 40, alignItems: 'center' }
 });

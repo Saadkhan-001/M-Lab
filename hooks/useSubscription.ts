@@ -8,19 +8,22 @@ export function useSubscription() {
   const [loading, setLoading] = useState(true);
   const [planName, setPlanName] = useState<string | null>(null);
   const [customerInfo, setCustomerInfo] = useState<CustomerInfo | null>(null);
+  const [tierLevel, setTierLevel] = useState<0 | 1 | 2 | 3>(0);
 
-  const getPlanLabel = (info: CustomerInfo) => {
+  const getPlanInfo = (info: CustomerInfo) => {
     const activeEntitlement = info.entitlements.active[REVENUECAT_CONFIG.ENTITLEMENT_ID];
-    if (!activeEntitlement) return null;
+    if (!activeEntitlement) return { name: null, level: 0 as const };
 
-    const productId = activeEntitlement.productIdentifier;
+    const productId = activeEntitlement.productIdentifier.toLowerCase();
     
-    // Map RevenueCat Product IDs to Display Names
-    if (productId.includes('monthly')) return 'Monthly Pro';
-    if (productId.includes('yearly')) return 'Yearly Pro';
-    if (productId.includes('lifetime')) return 'Lifetime Pro';
+    if (productId.includes('elite')) return { name: 'Elite Member', level: 3 as const };
+    if (productId.includes('professional')) return { name: 'Professional Pro', level: 2 as const };
+    if (productId.includes('starter')) return { name: 'Starter Pro', level: 1 as const };
     
-    return 'Pro Member';
+    // Fallback for legacy IDs
+    if (productId.includes('monthly') || productId.includes('yearly')) return { name: 'Pro Member', level: 2 as const };
+    
+    return { name: 'Pro Member', level: 2 as const };
   };
 
   useEffect(() => {
@@ -28,9 +31,10 @@ export function useSubscription() {
       try {
         const info = await Purchases.getCustomerInfo();
         setCustomerInfo(info);
-        const hasEntitlement = !!info.entitlements.active[REVENUECAT_CONFIG.ENTITLEMENT_ID];
-        setIsPro(hasEntitlement);
-        setPlanName(getPlanLabel(info));
+        const { name, level } = getPlanInfo(info);
+        setIsPro(level > 0);
+        setPlanName(name);
+        setTierLevel(level);
       } catch (e) {
         console.error('Subscription Check Error:', e);
       } finally {
@@ -40,20 +44,20 @@ export function useSubscription() {
 
     checkStatus();
 
-    // Listen for changes (purchases, renewals)
     const listener = (info: CustomerInfo) => {
       setCustomerInfo(info);
-      setIsPro(!!info.entitlements.active[REVENUECAT_CONFIG.ENTITLEMENT_ID]);
-      setPlanName(getPlanLabel(info));
+      const { name, level } = getPlanInfo(info);
+      setIsPro(level > 0);
+      setPlanName(name);
+      setTierLevel(level);
     };
 
     Purchases.addCustomerInfoUpdateListener(listener);
     
     return () => {
       // In latest react-native-purchases, the listener removal is handled differently
-      // but keeping it structural for best practice
     };
   }, []);
 
-  return { isPro, loading, planName, customerInfo };
+  return { isPro, loading, planName, customerInfo, tierLevel };
 }

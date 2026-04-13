@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { View, StyleSheet, ScrollView, TouchableOpacity, Modal, TextInput, Alert, ActivityIndicator, Image, Switch, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, StyleSheet, ScrollView, TouchableOpacity, Modal, TextInput, Alert, ActivityIndicator, Image, Switch, KeyboardAvoidingView, Platform, FlatList } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Settings, LogOut, Shield, Bell, ChevronRight, FlaskConical, Plus, X, Sparkles, Trash2, CreditCard, User as UserIcon, Crown } from 'lucide-react-native';
+import { Settings, LogOut, Shield, Bell, ChevronRight, FlaskConical, Plus, X, Sparkles, Trash2, CreditCard, User as UserIcon, Crown, Edit3, Gem, Zap } from 'lucide-react-native';
 import { useAuth, useUser } from '@clerk/clerk-expo';
 import { collection, query, onSnapshot, doc, setDoc, addDoc, deleteDoc, updateDoc, getDoc } from 'firebase/firestore';
 import { useRouter } from 'expo-router';
@@ -27,10 +27,11 @@ export default function SettingsScreen() {
   const { signOut } = useAuth();
   const { user } = useUser();
   const router = useRouter();
-  const { isPro, planName, loading: subLoading } = useSubscription();
+  const { isPro, planName, tierLevel, loading: subLoading } = useSubscription();
   
   // Repository States
   const [catalog, setCatalog] = useState<TestCatalogItem[]>([]);
+  const [isRepoModalOpen, setIsRepoModalOpen] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingTest, setEditingTest] = useState<Partial<TestCatalogItem> | null>(null);
   const [isAILoading, setIsAILoading] = useState(false);
@@ -125,9 +126,37 @@ export default function SettingsScreen() {
     }
   };
 
+  const handleDeleteTest = async (testId: string) => {
+    Alert.alert(
+      "Confirm Delete",
+      "Are you sure you want to remove this test from your catalog?",
+      [
+        { text: "Cancel", style: "cancel" },
+        { 
+          text: "Delete", 
+          style: "destructive", 
+          onPress: async () => {
+            try {
+              if (!user?.id) return;
+              const userRef = doc(db, 'users', user.id);
+              const userSnap = await getDoc(userRef);
+              const labId = userSnap.data()?.laboratoryId;
+              if (!labId) return;
+
+              await deleteDoc(doc(db, 'laboratories', labId, 'test_catalog', testId));
+              Alert.alert("Deleted", "Test removed from catalog.");
+            } catch (e) {
+              Alert.alert("Error", "Could not delete test.");
+            }
+          }
+        }
+      ]
+    );
+  };
+
   const autoGenerateWithAI = async () => {
-    if (!isPro) {
-      Alert.alert("Upgrade Required", "AI Auto-Generation is a Pro feature. Level up your lab to unlock it!", [
+    if (tierLevel < 2) {
+      Alert.alert("Professional Feature", "AI Auto-Generation requires a Professional or Elite membership. Upgrade to unlock medical intelligence!", [
         { text: "Cancel", style: "cancel" },
         { text: "View Plans", onPress: () => router.push('/plans') }
       ]);
@@ -300,10 +329,30 @@ export default function SettingsScreen() {
           </View>
           
           <View style={styles.planBadgeContainer}>
-            <View style={[styles.planBadge, { backgroundColor: isPro ? '#FFD700' : Colors.grayscale.lightGray }]}>
-              {isPro && <Crown size={12} color={Colors.primary.navy} style={{ marginRight: 4 }} />}
-              <AppText variant="caption1" fontFamily="Onest-Bold" color={Colors.primary.navy}>
-                {isPro ? (planName || 'PRO MEMBER').toUpperCase() : 'FREE PLAN'}
+            <View style={[
+              styles.planBadge, 
+              { 
+                backgroundColor: 
+                  tierLevel === 3 ? '#E1BEE7' : // Elite Purple
+                  tierLevel === 2 ? '#FFF9C4' : // Professional Gold
+                  tierLevel === 1 ? '#E3F2FD' : // Starter Blue
+                  Colors.grayscale.lightGray 
+              }
+            ]}>
+              {tierLevel === 3 && <Gem size={12} color="#7B1FA2" style={{ marginRight: 4 }} />}
+              {tierLevel === 2 && <Crown size={12} color="#FBC02D" style={{ marginRight: 4 }} />}
+              {tierLevel === 1 && <Zap size={12} color="#1976D2" style={{ marginRight: 4 }} />}
+              <AppText 
+                variant="caption1" 
+                fontFamily="Onest-Bold" 
+                color={
+                  tierLevel === 3 ? '#7B1FA2' :
+                  tierLevel === 2 ? '#FBC02D' :
+                  tierLevel === 1 ? '#1976D2' :
+                  Colors.primary.navy
+                }
+              >
+                {planName ? planName.toUpperCase() : 'FREE PLAN'}
               </AppText>
             </View>
           </View>
@@ -314,10 +363,7 @@ export default function SettingsScreen() {
           <SettingItem 
             icon={FlaskConical} 
             label="Manage Test Repository" 
-            onPress={() => {
-              setEditingTest({ name: '', price: 0, tat: '', parameters: [] });
-              setIsModalOpen(true);
-            }} 
+            onPress={() => setIsRepoModalOpen(true)} 
           />
           <SettingItem 
             icon={CreditCard} 
@@ -352,6 +398,63 @@ export default function SettingsScreen() {
         </View>
       </ScrollView>
 
+      {/* Test Repository List Modal */}
+      <Modal visible={isRepoModalOpen} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+             <View style={styles.modalHeader}>
+                <AppText variant="title2">Test Repository</AppText>
+                <TouchableOpacity onPress={() => setIsRepoModalOpen(false)}><X size={24} color="black" /></TouchableOpacity>
+             </View>
+
+             <View style={{ padding: 24, flex: 1 }}>
+                <TouchableOpacity 
+                   style={styles.addNewTestBtn}
+                   onPress={() => {
+                      setEditingTest({ name: '', price: 0, tat: '', parameters: [] });
+                      setIsModalOpen(true);
+                   }}
+                >
+                   <Plus size={20} color="white" />
+                   <AppText variant="body" fontFamily="Onest-Bold" color="white" style={{ marginLeft: 8 }}>Add New Test</AppText>
+                </TouchableOpacity>
+
+                <FlatList 
+                   data={catalog}
+                   keyExtractor={(item) => item.id}
+                   showsVerticalScrollIndicator={false}
+                   contentContainerStyle={{ paddingBottom: 100 }}
+                   renderItem={({ item }) => (
+                      <View style={styles.testRepoItem}>
+                         <View style={{ flex: 1 }}>
+                            <AppText variant="body" fontFamily="Onest-Bold">{item.name}</AppText>
+                            <AppText variant="caption1" color={Colors.grayscale.darkGray}>Price: £{item.price} • TAT: {item.tat}</AppText>
+                         </View>
+                         <View style={{ flexDirection: 'row', gap: 12 }}>
+                            <TouchableOpacity onPress={() => {
+                               setEditingTest(item);
+                               setIsModalOpen(true);
+                            }}>
+                               <Edit3 size={20} color={Colors.primary.navy} />
+                            </TouchableOpacity>
+                            <TouchableOpacity onPress={() => handleDeleteTest(item.id)}>
+                               <Trash2 size={20} color={Colors.message.error} />
+                            </TouchableOpacity>
+                         </View>
+                      </View>
+                   )}
+                   ListEmptyComponent={
+                      <View style={{ alignItems: 'center', marginTop: 40 }}>
+                         <FlaskConical size={48} color={Colors.grayscale.lightGray} />
+                         <AppText variant="body" color={Colors.grayscale.darkGray} style={{ marginTop: 12 }}>Your repository is empty.</AppText>
+                      </View>
+                   }
+                />
+             </View>
+          </View>
+        </View>
+      </Modal>
+
       {/* Test Manager Modal */}
       <Modal visible={isModalOpen} animationType="slide" transparent>
         <View style={styles.modalOverlay}>
@@ -380,6 +483,7 @@ export default function SettingsScreen() {
                       </TouchableOpacity>
                     </View>
                     {!isPro && <AppText variant="caption1" color={Colors.primary.orange} style={{ marginTop: 6 }}>Upgrade to Pro for AI intelligence ✨</AppText>}
+                    {tierLevel === 1 && <AppText variant="caption1" color={Colors.primary.orange} style={{ marginTop: 6 }}>Upgrade to Professional for AI intelligence ✨</AppText>}
                  </View>
 
                  <View style={{ flexDirection: 'row', gap: 16 }}>
@@ -585,5 +689,7 @@ const styles = StyleSheet.create({
   paramItem: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 16, backgroundColor: Colors.grayscale.offWhite, borderRadius: 16, marginBottom: 12 },
   paramInput: { borderBottomWidth: 1, borderBottomColor: Colors.grayscale.silver, fontSize: 13, paddingVertical: 4, fontFamily: 'Onest-Medium' },
   authIconCircle: { width: 64, height: 64, borderRadius: 32, backgroundColor: `${Colors.primary.navy}15`, justifyContent: 'center', alignItems: 'center' },
-  modalActionBtn: { height: 50, borderRadius: 12, justifyContent: 'center', alignItems: 'center' }
+  modalActionBtn: { height: 50, borderRadius: 12, justifyContent: 'center', alignItems: 'center' },
+  addNewTestBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.primary.navy, paddingVertical: 14, borderRadius: 16, marginBottom: 20 },
+  testRepoItem: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 16, backgroundColor: Colors.grayscale.offWhite, borderRadius: 20, marginBottom: 12 },
 });

@@ -10,7 +10,8 @@ import { useUser } from '@clerk/clerk-expo';
 import { Colors } from '../../../constants/Colors';
 import AppText from '../../../components/AppText';
 import AppButton from '../../../components/AppButton';
-import { useLocalSearchParams } from 'expo-router';
+import { useSubscription } from '../../../hooks/useSubscription';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { ReportEngine } from '../../../utils/reportEngine';
 import * as Sharing from 'expo-sharing';
 import * as Clipboard from 'expo-clipboard';
@@ -36,7 +37,9 @@ interface Patient {
 
 export default function BillingScreen() {
   const { user } = useUser();
+  const router = useRouter();
   const { patientId } = useLocalSearchParams();
+  const { tierLevel, isPro } = useSubscription();
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [patients, setPatients] = useState<Patient[]>([]);
@@ -237,6 +240,31 @@ export default function BillingScreen() {
       const userSnap = await getDoc(userRef);
       const labId = userSnap.data()?.laboratoryId;
       if (!labId) throw new Error("Lab ID not found");
+
+      // --- Tier Gating Check ---
+      if (tierLevel < 2) {
+        const now = new Date();
+        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+        const testsRef = collection(db, 'laboratories', labId, 'tests');
+        const q = query(testsRef, where('createdAt', '>=', Timestamp.fromDate(startOfMonth)));
+        const testSnap = await getDocs(q);
+        const monthlyCount = testSnap.size;
+
+        const limit = tierLevel === 1 ? 100 : 10;
+        if (monthlyCount >= limit) {
+          Alert.alert(
+            "Limit Reached",
+            `Your ${tierLevel === 1 ? 'Starter' : 'Free'} plan allows up to ${limit} tests per month. You've used ${monthlyCount}. Upgrade to Professional for unlimited tests!`,
+            [
+              { text: "Later", style: "cancel" },
+              { text: "View Plans", onPress: () => router.push('/plans') }
+            ]
+          );
+          setIsFinalizing(false);
+          return;
+        }
+      }
+      // -------------------------
       
       // 1. Save Invoice
       const invoiceRef = collection(db, 'laboratories', labId, 'invoices');
