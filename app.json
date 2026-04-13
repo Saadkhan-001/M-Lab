@@ -20,7 +20,6 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#0F172A"
       },
-      "predictiveBackGestureEnabled": false,
       "package": "com.msfdigitalsolutions.labmanagementapp"
     },
     "web": {
