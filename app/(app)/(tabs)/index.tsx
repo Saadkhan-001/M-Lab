@@ -164,10 +164,10 @@ export default function DashboardScreen() {
               </AppText>
             </View>
             <View style={styles.headerIcons}>
-              <TouchableOpacity style={styles.iconButton}>
+              <TouchableOpacity style={styles.iconButton} onPress={() => router.push('/(app)/(tabs)/patients')}>
                 <Search size={22} color={Colors.primary.navy} strokeWidth={2.5} />
               </TouchableOpacity>
-              <TouchableOpacity style={styles.iconButton}>
+              <TouchableOpacity style={styles.iconButton} onPress={() => Alert.alert('Notifications', 'You have no new notifications.')}>
                 <Bell size={22} color={Colors.primary.navy} strokeWidth={2.5} />
                 <View style={styles.notificationBadge} />
               </TouchableOpacity>
@@ -182,8 +182,9 @@ export default function DashboardScreen() {
                 placeholder="Search patients or tests..."
                 placeholderTextColor={Colors.grayscale.silver}
                 style={styles.searchInput}
+                onFocus={() => router.push('/(app)/(tabs)/patients')}
               />
-              <TouchableOpacity style={styles.filterButton}>
+              <TouchableOpacity style={styles.filterButton} onPress={() => router.push('/(app)/(tabs)/patients')}>
                 <LayoutGrid size={18} color={Colors.primary.navy} />
               </TouchableOpacity>
             </View>
