@@ -303,42 +303,33 @@ export default function BillingScreen() {
       setIsFinalizing(true);
       const uri = await ReportEngine.generateReceiptPDF(labProfile || {}, completedInvoice.patient, completedInvoice, currencySymbol);
       
-      // Upload PDF to Firebase to create a Secure Cloud Link
-      const blob: any = await new Promise((resolve, reject) => {
-           const xhr = new XMLHttpRequest();
-           xhr.onload = function() { resolve(xhr.response); };
-           xhr.onerror = function(e) { reject(new TypeError("Network request failed")); };
-           xhr.responseType = "blob";
-           xhr.open("GET", uri, true);
-           xhr.send(null);
-      });
+      // Build the WhatsApp message
+      let text = `Hello ${completedInvoice.patient.name},\nThank you for your visit to ${labProfile?.name || 'our laboratory'}. Attached is your payment receipt showing a processed amount of ${currencySymbol}${completedInvoice.paid}.\n\nRegards.`;
 
-      const pdfRef = ref(storage, `receipts/${completedInvoice.invoiceNo}_${Date.now()}.pdf`);
-      await uploadBytes(pdfRef, blob);
-      const downloadUrl = await getDownloadURL(pdfRef);
+      // Copy message to clipboard
+      await Clipboard.setStringAsync(text);
 
-      // WhatsApp Share with Text Caption fallback
-      let text = `Hello ${completedInvoice.patient.name},\nThank you for your visit to ${labProfile?.name || 'our laboratory'}. Attached is your payment receipt showing a processed amount of ${currencySymbol}${completedInvoice.paid}.\n\n📄 View Your Receipt:\n${downloadUrl}\n\nRegards.`;
-      
-      let phone = completedInvoice.patient?.phone || '';
-      phone = phone.replace(/[^0-9]/g, '');
-      if (phone.startsWith('03')) {
-          phone = '92' + phone.substring(1); 
-      } else if (!phone.startsWith('92') && phone.length === 10) {
-          phone = '92' + phone; 
-      }
-
-      const whatsappUrl = `whatsapp://send?phone=${phone}&text=${encodeURIComponent(text)}`;
-      const canOpen = await Linking.canOpenURL(whatsappUrl);
-      
-      if (canOpen) {
-          await Linking.openURL(whatsappUrl);
+      // Use native share sheet to send the PDF directly
+      const isAvailable = await Sharing.isAvailableAsync();
+      if (isAvailable) {
+        Alert.alert(
+          "Message Copied ✅",
+          "Your receipt message has been copied to clipboard. Select WhatsApp in the share dialog, then paste the message along with the PDF.",
+          [{ text: "Share Receipt", onPress: async () => {
+            await Sharing.shareAsync(uri, {
+              UTI: '.pdf',
+              mimeType: 'application/pdf',
+              dialogTitle: 'Send Receipt via WhatsApp'
+            });
+          }}]
+        );
       } else {
-          await Clipboard.setStringAsync(text);
-          Alert.alert("Caption Copied", "The smart message text was copied to your clipboard. You can tap 'Paste' in WhatsApp to send it with the document!");
-          await Sharing.shareAsync(uri, { UTI: '.pdf', mimeType: 'application/pdf', dialogTitle: 'Share Receipt' });
+        Alert.alert("Sharing Unavailable", "Sharing is not available on this device.");
       }
-    } catch(e) { Alert.alert("Error", "Could not share report."); }
+    } catch(e: any) {
+      console.error("Share Receipt Error:", e);
+      Alert.alert("Error", "Could not share receipt: " + (e.message || "Unknown error"));
+    }
     finally { setIsFinalizing(false); }
   };
 

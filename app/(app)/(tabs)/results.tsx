@@ -39,6 +39,7 @@ export default function ResultsScreen() {
   const [activeTab, setActiveTab] = useState<'pending' | 'reviewing' | 'completed'>('pending');
   const [tests, setTests] = useState<TestRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
   
   // Worksheet Modal States
   const [selectedTest, setSelectedTest] = useState<TestRecord | null>(null);
@@ -106,9 +107,18 @@ export default function ResultsScreen() {
   }, [user]);
 
   const filteredData = useMemo(() => {
-    return tests.filter(t => t.reportStatus === activeTab)
-      .sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
-  }, [tests, activeTab]);
+    let base = tests.filter(t => t.reportStatus === activeTab);
+    
+    if (searchQuery) {
+      const lowerQuery = searchQuery.toLowerCase();
+      base = base.filter(t => 
+        t.patientName.toLowerCase().includes(lowerQuery) || 
+        t.testName.toLowerCase().includes(lowerQuery)
+      );
+    }
+
+    return base.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+  }, [tests, activeTab, searchQuery]);
 
   // Load Parameters from Repository or AI
   const loadParameters = async (testRequest: TestRecord) => {
@@ -230,47 +240,29 @@ export default function ResultsScreen() {
       
       const uri = await ReportEngine.generatePDF(labProfile || {}, patientData || { name: selectedTest?.patientName }, selectedTest || {} as any, currentParameters);
 
-      // Upload PDF to Firebase to create a Secure Cloud Link
-      const blob: any = await new Promise((resolve, reject) => {
-           const xhr = new XMLHttpRequest();
-           xhr.onload = function() { resolve(xhr.response); };
-           xhr.onerror = function(e) { reject(new TypeError("Network request failed")); };
-           xhr.responseType = "blob";
-           xhr.open("GET", uri, true);
-           xhr.send(null);
-      });
+      // Copy the message text to clipboard so user can paste it in WhatsApp
+      await Clipboard.setStringAsync(text);
 
-      const pdfRef = ref(storage, `reports/${selectedTest?.id}_${Date.now()}.pdf`);
-      await uploadBytes(pdfRef, blob);
-      const downloadUrl = await getDownloadURL(pdfRef);
-
-      // Append secure link to the template
-      text = text + "\n\n📄 View Your Report:\n" + downloadUrl;
-
-      // Smart Phone Number Parsing (Converting typical local numbers to standard international format)
-      let phone = patientData?.phone || '';
-      phone = phone.replace(/[^0-9]/g, '');
-      if (phone.startsWith('03')) {
-          phone = '92' + phone.substring(1); 
-      } else if (!phone.startsWith('92') && phone.length === 10) {
-          phone = '92' + phone; 
-      }
-
-      const whatsappUrl = `whatsapp://send?phone=${phone}&text=${encodeURIComponent(text)}`;
-      const canOpen = await Linking.canOpenURL(whatsappUrl);
-      
-      if (canOpen) {
-          await Linking.openURL(whatsappUrl);
+      // Use native share sheet to send the PDF directly to WhatsApp
+      const isAvailable = await Sharing.isAvailableAsync();
+      if (isAvailable) {
+        Alert.alert(
+          "Message Copied ✅", 
+          "Your WhatsApp message has been copied to clipboard. The share dialog will open now — select WhatsApp, then paste the message along with the PDF.",
+          [{ text: "Share PDF", onPress: async () => {
+            await Sharing.shareAsync(uri, { 
+              UTI: '.pdf', 
+              mimeType: 'application/pdf', 
+              dialogTitle: 'Send Report via WhatsApp' 
+            });
+          }}]
+        );
       } else {
-          // Fallback if WhatsApp is deeply inaccessible
-          await Clipboard.setStringAsync(text);
-          Alert.alert("Message Copied", "WhatsApp couldn't open automatically. Text & Link copied to clipboard!");
-          await Sharing.shareAsync(uri, { UTI: '.pdf', mimeType: 'application/pdf', dialogTitle: 'Share Report' });
+        Alert.alert("Sharing Unavailable", "Sharing is not available on this device.");
       }
-
-    } catch(e) {
-      console.error(e);
-      Alert.alert("Error", "Could not share report.");
+    } catch(e: any) {
+      console.error("WhatsApp Send Error:", e);
+      Alert.alert("Error", "Could not share report: " + (e.message || "Unknown error"));
     } finally {
       setIsSubmitting(false);
     }
@@ -297,6 +289,26 @@ export default function ResultsScreen() {
     <SafeAreaView style={styles.container} edges={['top']}>
       <View style={styles.header}>
         <AppText variant="title1" style={styles.pageTitle}>Diagnostics</AppText>
+        
+        {/* New Search Bar */}
+        <View style={styles.searchBarContainer}>
+           <View style={styles.searchBar}>
+              <Search size={20} color={Colors.grayscale.silver} />
+              <TextInput 
+                placeholder="Search patient or test..." 
+                style={styles.searchInput}
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                placeholderTextColor={Colors.grayscale.silver}
+              />
+              {searchQuery !== '' && (
+                <TouchableOpacity onPress={() => setSearchQuery('')}>
+                  <X size={18} color={Colors.grayscale.silver} />
+                </TouchableOpacity>
+              )}
+           </View>
+        </View>
+
         <View style={styles.tabBar}>
           <TabButton id="pending" label="Pending" icon={Clock} />
           <TabButton id="reviewing" label="Review" icon={SlidersHorizontal} />
@@ -423,11 +435,14 @@ export default function ResultsScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.grayscale.white },
   header: { paddingHorizontal: 24, paddingTop: 10 },
-  pageTitle: { color: Colors.primary.navy, marginBottom: 20 },
+  pageTitle: { color: Colors.primary.navy, marginBottom: 12 },
+  searchBarContainer: { marginBottom: 16 },
+  searchBar: { flexDirection: 'row', alignItems: 'center', backgroundColor: Colors.grayscale.offWhite, borderRadius: 16, height: 50, paddingHorizontal: 16, gap: 12 },
+  searchInput: { flex: 1, fontFamily: 'Onest-Medium', fontSize: 14, color: Colors.primary.navy },
   tabBar: { flexDirection: 'row', gap: 16, marginBottom: 10 },
   tab: { flex: 1, alignItems: 'center', paddingVertical: 12, position: 'relative' },
-  activeTab: { backgroundColor: Colors.grayscale.offWhite, borderRadius: 16 },
-  tabLabel: { marginTop: 4, color: Colors.grayscale.silver },
+  activeTab: { backgroundColor: 'rgba(232, 245, 233, 0.4)', borderRadius: 16 },
+  tabLabel: { marginTop: 4, color: Colors.grayscale.silver, fontSize: 11 },
   tabIndicator: { position: 'absolute', bottom: 0, width: 24, height: 3, backgroundColor: Colors.primary.navy, borderRadius: 2 },
   listContent: { padding: 24, paddingBottom: 100 },
   testCard: { backgroundColor: 'white', borderRadius: 24, padding: 18, marginBottom: 16, borderWidth: 1, borderColor: Colors.grayscale.offWhite, elevation: 2 },

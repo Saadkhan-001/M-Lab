@@ -266,8 +266,10 @@ export default function PatientProfile() {
                       
                       setPatient({ ...patient, ...editForm, age: parseInt(editForm.age) || 0 });
                       setIsEditModalOpen(false);
-                    } catch(e) {
+                      Alert.alert("Success", "Patient profile updated successfully.");
+                    } catch(e: any) {
                       console.error(e);
+                      Alert.alert("Error", "Could not update profile: " + e.message);
                     } finally {
                       setIsUpdating(false);
                     }

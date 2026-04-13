@@ -85,6 +85,7 @@ function RootLayoutNav() {
     }
   }, [isSignedIn, isLoaded, segments, user, rootNavigationState?.key]);
 
+
   return (
     <Stack screenOptions={{ headerShown: false }}>
       <Stack.Screen name="index" options={{ headerShown: false }} />

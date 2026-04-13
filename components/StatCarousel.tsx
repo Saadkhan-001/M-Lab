@@ -60,7 +60,7 @@ export default function StatCarousel({ data }: { data: StatData }) {
       id: 'billing',
       title: 'Financial Summary',
       isBilling: true,
-      data: data.accounting,
+      data: data.accounting || { paid: 0, remaining: 0, discounted: 0 },
       icon: CreditCard,
       color: Colors.primary.orange,
       bg: 'rgba(243, 137, 29, 0.15)', // orange tint
@@ -91,15 +91,15 @@ export default function StatCarousel({ data }: { data: StatData }) {
           <View style={styles.billingRow}>
             <View style={styles.billingItem}>
               <AppText variant="caption1" color={Colors.grayscale.darkGray}>Paid</AppText>
-              <AppText variant="body" fontFamily="Onest-Bold" color={Colors.message.success}>{formatCurrency(item.data.paid)}</AppText>
+              <AppText variant="body" fontFamily="Onest-Bold" color={Colors.message.success}>{formatCurrency(item.data?.paid || 0)}</AppText>
             </View>
             <View style={styles.billingItem}>
               <AppText variant="caption1" color={Colors.grayscale.darkGray}>Remaining</AppText>
-              <AppText variant="body" fontFamily="Onest-Bold" color={Colors.message.error}>{formatCurrency(item.data.remaining)}</AppText>
+              <AppText variant="body" fontFamily="Onest-Bold" color={Colors.message.error}>{formatCurrency(item.data?.remaining || 0)}</AppText>
             </View>
             <View style={styles.billingItem}>
               <AppText variant="caption1" color={Colors.grayscale.darkGray}>Discount</AppText>
-              <AppText variant="body" fontFamily="Onest-Bold" color={Colors.primary.navy}>{formatCurrency(item.data.discounted)}</AppText>
+              <AppText variant="body" fontFamily="Onest-Bold" color={Colors.primary.navy}>{formatCurrency(item.data?.discounted || 0)}</AppText>
             </View>
           </View>
         </View>

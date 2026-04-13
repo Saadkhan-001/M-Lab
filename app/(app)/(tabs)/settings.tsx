@@ -236,23 +236,10 @@ export default function SettingsScreen() {
     try {
        let finalLogoUrl = labForm.logoUrl;
        
-       if (finalLogoUrl && !finalLogoUrl.startsWith('http')) {
-         const blob: any = await new Promise((resolve, reject) => {
-           const xhr = new XMLHttpRequest();
-           xhr.onload = function() {
-             resolve(xhr.response);
-           };
-           xhr.onerror = function(e) {
-             reject(new TypeError("Network request failed"));
-           };
-           xhr.responseType = "blob";
-           xhr.open("GET", finalLogoUrl, true);
-           xhr.send(null);
-         });
-
-         const logoRef = ref(storage, `logos/${labProfile.id}.jpg`);
-         await uploadBytes(logoRef, blob);
-         finalLogoUrl = await getDownloadURL(logoRef);
+       // If the user picked a new image, store it as a base64 data URI
+       // This bypasses Firebase Storage entirely
+       if (finalLogoUrl && !finalLogoUrl.startsWith('http') && !finalLogoUrl.startsWith('data:') && labForm.base64Logo) {
+         finalLogoUrl = `data:image/jpeg;base64,${labForm.base64Logo}`;
        }
        
        await updateDoc(doc(db, 'laboratories', labProfile.id), {
@@ -265,7 +252,7 @@ export default function SettingsScreen() {
        setIsLabProfileOpen(false);
        Alert.alert("Success", "Lab Profile Updated");
     } catch(e: any) { 
-       console.error(e); 
+       console.error("Save Lab Profile Error:", e); 
        Alert.alert("Error", e.message || "Could not save profile.");
     } finally { 
        setIsAuthLoading(false); 
@@ -402,8 +389,11 @@ export default function SettingsScreen() {
                         style={styles.input} 
                         placeholder="0.00" 
                         keyboardType="numeric" 
-                        value={editingTest?.price?.toString() === 'NaN' || editingTest?.price === 0 ? '' : editingTest?.price?.toString()} 
-                        onChangeText={v => setEditingTest({...editingTest, price: v as any})} 
+                        value={editingTest?.price === 0 ? '' : editingTest?.price?.toString()} 
+                        onChangeText={v => {
+                           const cleanValue = v.replace(/[^0-9.]/g, '');
+                           setEditingTest({...editingTest, price: cleanValue as any});
+                        }} 
                       />
                     </View>
                     <View style={[styles.formGroup, { flex: 1 }]}>

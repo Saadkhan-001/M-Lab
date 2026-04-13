@@ -5,7 +5,7 @@ import { Search, UserPlus, Users, UserCheck, UserMinus, Phone, Hash, Calendar, C
 import { collection, query, onSnapshot, doc, setDoc, getDocs, limit, getDoc, Timestamp, addDoc } from 'firebase/firestore';
 import { db } from '../../../config/firebase';
 import { useUser } from '@clerk/clerk-expo';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Colors } from '../../../constants/Colors';
 import AppText from '../../../components/AppText';
 import AppButton from '../../../components/AppButton';
@@ -24,11 +24,16 @@ interface Patient {
 
 export default function PatientsScreen() {
   const router = useRouter();
+  const { q } = useLocalSearchParams();
   const { user } = useUser();
   const [searchQuery, setSearchQuery] = useState('');
   const [patients, setPatients] = useState<Patient[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+
+  useEffect(() => {
+    if (q) setSearchQuery(q as string);
+  }, [q]);
 
   // Registration Modal State
   const [isRegisterOpen, setIsRegisterOpen] = useState(false);
