@@ -90,6 +90,10 @@ function RootLayoutNav() {
     const syncRCIdentity = async () => {
       if (isSignedIn && user?.id) {
         try {
+          // Detect Expo Go - skip RC sync if store not configured
+          const Constants = require('expo-constants').default;
+          if (Constants.appOwnership === 'expo') return;
+
           await Purchases.logIn(user.id);
         } catch (e) {
           console.error("RC Sync Error:", e);
@@ -122,16 +126,27 @@ export default function RootLayout() {
       SplashScreen.hideAsync();
     }
 
-    // Initialize RevenueCat
+    // Initialize RevenueCat (skip in Expo Go where native stores are unavailable)
     const initializePurchases = async () => {
-      //@ts-ignore - isConfigured sometimes not in types but works in SDK
-      const isConfigured = await Purchases.isConfigured();
-      if (isConfigured) return;
+      try {
+        // Detect Expo Go - native store is not available
+        const Constants = require('expo-constants').default;
+        if (Constants.appOwnership === 'expo') {
+          console.log('Expo Go detected. Skipping RevenueCat native configuration.');
+          return;
+        }
 
-      if (Platform.OS === 'ios' && REVENUECAT_CONFIG.API_KEY_IOS !== 'goog_placeholder_ios_key') {
-        Purchases.configure({ apiKey: REVENUECAT_CONFIG.API_KEY_IOS });
-      } else if (Platform.OS === 'android' && REVENUECAT_CONFIG.API_KEY_ANDROID !== 'goog_placeholder_android_key') {
-        Purchases.configure({ apiKey: REVENUECAT_CONFIG.API_KEY_ANDROID });
+        //@ts-ignore - isConfigured sometimes not in types but works in SDK
+        const isConfigured = await Purchases.isConfigured();
+        if (isConfigured) return;
+
+        if (Platform.OS === 'ios' && REVENUECAT_CONFIG.API_KEY_IOS !== 'goog_placeholder_ios_key') {
+          Purchases.configure({ apiKey: REVENUECAT_CONFIG.API_KEY_IOS });
+        } else if (Platform.OS === 'android' && REVENUECAT_CONFIG.API_KEY_ANDROID !== 'goog_placeholder_android_key') {
+          Purchases.configure({ apiKey: REVENUECAT_CONFIG.API_KEY_ANDROID });
+        }
+      } catch (e) {
+        console.log('RevenueCat configuration skipped:', e);
       }
     };
     

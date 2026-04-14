@@ -93,6 +93,13 @@ export default function PlansScreen() {
   useEffect(() => {
     const fetchOfferings = async () => {
       try {
+        // Detect Expo Go
+        const Constants = require('expo-constants').default;
+        if (Constants.appOwnership === 'expo') {
+          setLoading(false);
+          return;
+        }
+
         const offerings = await Purchases.getOfferings();
         if (offerings.current && offerings.current.availablePackages.length > 0) {
           setOfferings(offerings.current.availablePackages);
@@ -107,6 +114,13 @@ export default function PlansScreen() {
   }, []);
 
   const handlePurchase = async (pkg: PurchasesPackage) => {
+    // Detect Expo Go
+    const Constants = require('expo-constants').default;
+    if (Constants.appOwnership === 'expo') {
+      Alert.alert("Development Mode", "Native payments are disabled in Expo Go. You are currently in Development Pro mode.");
+      return;
+    }
+
     setPurchasingId(pkg.identifier);
     try {
       const { customerInfo } = await Purchases.purchasePackage(pkg);
@@ -230,6 +244,13 @@ export default function PlansScreen() {
           style={styles.restoreBtn} 
           onPress={async () => {
             try { 
+              // Detect Expo Go
+              const Constants = require('expo-constants').default;
+              if (Constants.appOwnership === 'expo') {
+                Alert.alert("Development Mode", "Restore functionality is disabled in Expo Go.");
+                return;
+              }
+
               const customerInfo = await Purchases.restorePurchases(); 
               await syncSubscriptionToDatabase(customerInfo);
               Alert.alert("Restored", "Your subscription is now active!"); 

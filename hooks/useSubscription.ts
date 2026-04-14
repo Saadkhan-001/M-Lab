@@ -29,6 +29,16 @@ export function useSubscription() {
   useEffect(() => {
     const checkStatus = async () => {
       try {
+        // Detect Expo Go - native store is not available
+        const Constants = require('expo-constants').default;
+        if (Constants.appOwnership === 'expo') {
+          setIsPro(true); // Default to pro for testing in Expo Go
+          setPlanName('Development Mode (Pro)');
+          setTierLevel(3);
+          setLoading(false);
+          return;
+        }
+
         const info = await Purchases.getCustomerInfo();
         setCustomerInfo(info);
         const { name, level } = getPlanInfo(info);
@@ -44,15 +54,19 @@ export function useSubscription() {
 
     checkStatus();
 
-    const listener = (info: CustomerInfo) => {
-      setCustomerInfo(info);
-      const { name, level } = getPlanInfo(info);
-      setIsPro(level > 0);
-      setPlanName(name);
-      setTierLevel(level);
-    };
+    // Only add listener if not in Expo Go
+    const Constants = require('expo-constants').default;
+    if (Constants.appOwnership !== 'expo') {
+      const listener = (info: CustomerInfo) => {
+        setCustomerInfo(info);
+        const { name, level } = getPlanInfo(info);
+        setIsPro(level > 0);
+        setPlanName(name);
+        setTierLevel(level);
+      };
 
-    Purchases.addCustomerInfoUpdateListener(listener);
+      Purchases.addCustomerInfoUpdateListener(listener);
+    }
     
     return () => {
       // In latest react-native-purchases, the listener removal is handled differently
